@@ -31,8 +31,11 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - DB_PATH=/data/docker_agent.db
     volumes:
-      # 必须：让 Agent 能访问宿主机 Docker
+      # ⚠️  必须挂载：让 Agent 能访问宿主机 Docker
+      # Linux 用这行（默认）：
       - /var/run/docker.sock:/var/run/docker.sock
+      # Docker Desktop for Mac/Windows 用这行（取消注释）：
+      # - ~/.docker/desktop/docker.sock:/var/run/docker.sock
       # 持久化对话历史、LLM 配置、快照数据
       - docker-agent-data:/data
 

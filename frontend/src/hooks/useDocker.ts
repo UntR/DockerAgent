@@ -25,7 +25,14 @@ export function useDocker() {
       setVolumes(volumes as never[])
       setSystemInfo(info as never)
     } catch (e: unknown) {
-      toast.error(`刷新失败: ${e instanceof Error ? e.message : String(e)}`)
+      const msg = e instanceof Error ? e.message : String(e)
+      const isSocketErr = msg.includes('No such file') || msg.includes('Connection aborted') || msg.includes('Docker socket')
+      toast.error(
+        isSocketErr
+          ? 'Docker 未连接 — 请确认启动时已挂载 socket：\n-v /var/run/docker.sock:/var/run/docker.sock'
+          : `刷新失败: ${msg}`,
+        { duration: isSocketErr ? 8000 : 4000 }
+      )
     } finally {
       setLoading('all', false)
     }

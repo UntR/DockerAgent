@@ -1,3 +1,4 @@
+import os
 import docker
 import asyncio
 from typing import Any, Dict, List, Optional
@@ -13,6 +14,44 @@ def run_sync(func):
     return wrapper
 
 
+# 常见 Docker socket 路径，按优先级依次尝试
+_SOCKET_CANDIDATES = [
+    os.environ.get("DOCKER_SOCKET", ""),           # 优先用环境变量
+    "unix:///var/run/docker.sock",                  # 标准 Linux
+    "unix:///run/docker.sock",                      # 部分发行版
+    os.path.expanduser("unix://~/.docker/desktop/docker.sock"),  # Docker Desktop Mac
+    "npipe:////./pipe/docker_engine",               # Docker Desktop Windows
+]
+
+
+def _make_client() -> docker.DockerClient:
+    """尝试各种 socket 路径，返回第一个可用的 DockerClient。"""
+    last_err: Exception = RuntimeError("未找到可用的 Docker socket")
+    for base_url in _SOCKET_CANDIDATES:
+        if not base_url:
+            continue
+        try:
+            client = docker.DockerClient(base_url=base_url, timeout=5)
+            client.ping()          # 验证连接
+            return client
+        except Exception as e:
+            last_err = e
+    # 最后尝试 from_env（读取 DOCKER_HOST 环境变量）
+    try:
+        client = docker.from_env(timeout=5)
+        client.ping()
+        return client
+    except Exception as e:
+        last_err = e
+    raise RuntimeError(
+        f"无法连接到 Docker 守护进程。\n"
+        f"请确保：\n"
+        f"  1. 已挂载 Docker socket：-v /var/run/docker.sock:/var/run/docker.sock\n"
+        f"  2. 或设置 DOCKER_SOCKET 环境变量指向正确路径\n"
+        f"原始错误：{last_err}"
+    )
+
+
 class DockerManager:
     def __init__(self):
         self._client: Optional[docker.DockerClient] = None
@@ -20,7 +59,13 @@ class DockerManager:
     @property
     def client(self) -> docker.DockerClient:
         if self._client is None:
-            self._client = docker.from_env()
+            self._client = _make_client()
+        else:
+            # 检测连接是否还活着，断了就重连
+            try:
+                self._client.ping()
+            except Exception:
+                self._client = _make_client()
         return self._client
 
     # ── 容器 ──────────────────────────────────────────────
