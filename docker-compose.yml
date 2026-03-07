@@ -1,0 +1,41 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────
+# DockerAgent — 单容器一键部署
+#
+# 快速启动：
+#   cp .env.example .env   # 填入 API Key
+#   docker compose up -d
+#   访问 http://localhost:3000
+# ─────────────────────────────────────────────────────────────
+
+services:
+  docker-agent:
+    # 方式一：从 Docker Hub 拉取（推荐）
+    image: ${DOCKERHUB_USERNAME:-yourname}/docker-agent:latest
+    # 方式二：本地构建（取消注释，同时注释上面的 image 行）
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: docker-agent
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:8088"
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-anthropic}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-3-5-sonnet-20241022}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - DB_PATH=/data/docker_agent.db
+    volumes:
+      # 必须：让 Agent 能访问宿主机 Docker
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 持久化对话历史、LLM 配置、快照数据
+      - docker-agent-data:/data
+
+volumes:
+  docker-agent-data:
+    name: docker-agent-data
