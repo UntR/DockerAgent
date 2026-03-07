@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.db.database import init_db
 from app.api import docker, agent, deploy, rollback, settings
@@ -56,14 +57,28 @@ app.include_router(deploy.router, prefix="/api")
 app.include_router(rollback.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 
-# 前端静态文件（生产环境）
-# 优先查相对路径（容器内 /app/frontend/dist），其次用环境变量覆盖
-_here = os.path.dirname(os.path.abspath(__file__))
-_static = os.environ.get("STATIC_DIR") or os.path.join(_here, "frontend", "dist")
-if os.path.exists(_static):
-    app.mount("/", StaticFiles(directory=_static, html=True), name="frontend")
-
-
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "DockerAgent"}
+
+
+# ── 前端静态文件（生产环境，必须在所有 API 路由之后注册）──────────
+_here = os.path.dirname(os.path.abspath(__file__))
+_static = os.environ.get("STATIC_DIR") or os.path.join(_here, "frontend", "dist")
+
+if os.path.exists(_static):
+    # 把 /assets/* 单独挂载（Vite 构建的 JS/CSS 带 hash，走这里）
+    _assets_dir = os.path.join(_static, "assets")
+    if os.path.exists(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
+    # Catch-all：SPA 路由兜底，所有非 API 路径都返回 index.html
+    # 若路径对应一个真实文件（favicon.ico 等），直接返回该文件
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        # 实际文件优先（favicon.ico / 其他根目录静态资源）
+        candidate = os.path.join(_static, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        # 其余一律返回 index.html，由 React Router 处理
+        return FileResponse(os.path.join(_static, "index.html"))
