@@ -1,22 +1,18 @@
 version: "3.9"
 
-# ─────────────────────────────────────────────────────────────
-# DockerAgent — 单容器一键部署
+# DockerAgent — 一键启动
 #
-# 快速启动：
-#   cp .env.example .env   # 填入 API Key
+# 使用方法：
+#   cp .env.example .env   # 填入你的 API Key
 #   docker compose up -d
 #   访问 http://localhost:3000
-# ─────────────────────────────────────────────────────────────
 
 services:
   docker-agent:
-    # 方式一：从 Docker Hub 拉取（推荐）
-    image: ${DOCKERHUB_USERNAME:-yourname}/docker-agent:latest
-    # 方式二：本地构建（取消注释，同时注释上面的 image 行）
+    image: rcpn7/docker-agent:latest
+    # 本地构建（取消注释下两行，注释上面的 image 行）：
     # build:
     #   context: .
-    #   dockerfile: Dockerfile
     container_name: docker-agent
     restart: unless-stopped
     ports:
@@ -31,12 +27,12 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - DB_PATH=/data/docker_agent.db
     volumes:
-      # ⚠️  必须挂载：让 Agent 能访问宿主机 Docker
-      # Linux 用这行（默认）：
+      # ⚠️ 必须挂载，Agent 才能控制宿主机 Docker
+      # Linux：
       - /var/run/docker.sock:/var/run/docker.sock
-      # Docker Desktop for Mac/Windows 用这行（取消注释）：
+      # Docker Desktop for Mac/Windows（取消注释上面那行，改用这行）：
       # - ~/.docker/desktop/docker.sock:/var/run/docker.sock
-      # 持久化对话历史、LLM 配置、快照数据
+      # 持久化数据（对话历史、LLM 配置、快照）
       - docker-agent-data:/data
 
 volumes:

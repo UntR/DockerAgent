@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/docker-agent
+  IMAGE: rcpn7/docker-agent
 
 jobs:
   build-and-push:

@@ -1,117 +1,159 @@
-# DockerAgent — AI 驱动的 Docker 管理平台
+# DockerAgent
 
-> 用自然语言管理你的 Docker，告别命令行恐惧。
+> 用自然语言管理你的 Docker。不需要记命令，不需要查文档，直接说话就行。
 
-一个将可视化 Docker 管理面板与 AI Agent 深度整合的开源项目。支持 Claude、DeepSeek、MiniMax、Kimi 等主流 LLM，通过对话完成容器管理、应用部署、日志排查等一切操作。
+这是我的第一个 Vibe Coding 项目。
 
-## ✨ 功能特性
+老实说，在这之前我对 Docker 的了解仅限于"知道它存在"。但 LLM 进化到今天这个程度，让我觉得可以试着把一个真实的想法从零做出来——一个能帮我（和像我一样的人）真正用起来 Docker 的 AI 助手。从架构设计到每一行代码，全程和 Claude 一起完成。做出来之后我自己也在用，它确实帮我省了很多事。
 
-| 功能 | 说明 |
-|------|------|
-| 🖥️ **可视化仪表盘** | 容器/镜像/网络/数据卷管理，实时 CPU/内存/磁盘监控，Compose 项目分组展示 |
-| 🤖 **AI 自然语言助手** | 用中文对话管理 Docker，支持 think 过程展示、工具调用可视化、Markdown 渲染 |
-| 📦 **智能部署向导** | 输入 GitHub URL，AI 自动分析项目配置需求，引导填写必填项后一键部署 |
-| 🔗 **应用依赖感知** | 自动识别 Ollama+Open WebUI 等应用间的网络依赖，部署时智能联通 |
-| ↩️ **一键回滚** | 每次部署前自动快照，支持保留/清除数据卷的安全回滚 |
-| 🧠 **记忆与反思** | 记住用户偏好，定期总结操作经验，多会话历史持久化 |
-| ⚙️ **可视化 LLM 配置** | 在设置页面管理 API Key，支持自定义 Provider，一键测试连通性 |
+感谢 Claude，感谢所有在推动 LLM 进步的人。这个时代真的很特别。
 
-## 🚀 快速开始
+---
 
-### 方式一：Docker Compose（推荐，单容器）
+## 它能做什么
 
-```bash
-# 1. 下载配置文件
-curl -O https://raw.githubusercontent.com/你的用户名/docker-agent/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/你的用户名/docker-agent/main/.env.example
+你可以直接对它说：
 
-# 2. 配置环境变量（至少填入一个 LLM API Key）
-cp .env.example .env
+- "帮我看看哪些容器在跑，有没有异常的"
+- "把这个 GitHub 项目给我部署起来：https://github.com/xxx/xxx"
+- "Dify 一直在 restart，帮我看看日志"
+- "我想部署 Open WebUI，它需要连到我已有的 Ollama"
+- "清理一下没用的镜像，空间不够了"
 
-# 3. 启动（自动拉取镜像）
-docker compose up -d
+它会分析、执行、反馈，遇到需要你决定的事情会先问你，而不是直接动手。
 
-# 访问 http://localhost:3000
-```
+---
 
-或者直接一行命令体验（临时运行）：
+## 功能
+
+| | |
+|---|---|
+| 🖥️ **可视化仪表盘** | 容器按 Compose 项目分组展示，实时 CPU / 内存 / 磁盘监控，一键打开 Web 端口 |
+| 🤖 **AI 对话助手** | 多会话管理，流式输出，展示思考过程和工具调用，Markdown 渲染，选项可点击 |
+| 📦 **智能部署向导** | 给一个 GitHub URL，AI 自动读取 README 和 .env.example，引导你填完必要配置再部署 |
+| 🔗 **依赖感知** | 知道 Ollama 和 Open WebUI 需要共享网络，部署时自动处理这类联动关系 |
+| ↩️ **一键回滚** | 每次部署前自动打快照，出问题可以回到部署前的状态，数据卷是否保留你说了算 |
+| 🧠 **记忆** | 记住你的偏好和常用配置，会话历史持久保存，越用越顺手 |
+| ⚙️ **LLM 自由切换** | 界面里直接管理 API Key，支持 Claude / DeepSeek / MiniMax / Kimi / 任意 OpenAI 兼容接口 |
+
+---
+
+## 一键启动
+
+**前提：机器上装了 Docker。**
 
 ```bash
 docker run -d \
+  --name docker-agent \
   -p 3000:8088 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v docker-agent-data:/data \
-  -e ANTHROPIC_API_KEY=你的key \
-  --name docker-agent \
-  你的用户名/docker-agent:latest
+  -e ANTHROPIC_API_KEY=your_key_here \
+  rcpn7/docker-agent:latest
 ```
 
-### 方式二：本地开发
+然后打开 [http://localhost:3000](http://localhost:3000)。
+
+> 没有 Anthropic key？支持 DeepSeek、MiniMax、Kimi 等任何 OpenAI 兼容接口。启动后在**设置页面**配置即可，无需重启。
+
+### 用 Docker Compose（推荐，方便管理配置）
 
 ```bash
-# 确保已安装：Python 3.10+、Node.js 18+、Docker
+# 下载配置文件
+curl -O https://raw.githubusercontent.com/UntR/DockerAgent/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/UntR/DockerAgent/main/.env.example
+
+# 填入你的 API Key
+cp .env.example .env
+nano .env  # 或者用你喜欢的编辑器
+
+# 启动
+docker compose up -d
+```
+
+---
+
+## 本地开发
+
+```bash
+git clone https://github.com/UntR/DockerAgent.git
+cd DockerAgent
 
 cp .env.example .env
 # 编辑 .env 填入 API Key
 
 bash dev.sh
-# 自动安装依赖并启动前后端，访问 http://localhost:3000
+# 自动安装依赖，启动前后端
+# 前端: http://localhost:3000
+# 后端 API 文档: http://localhost:8088/docs
 ```
 
-## ⚙️ 环境变量说明
+环境要求：Python 3.10+、Node.js 18+、Docker
 
-复制 `.env.example` 为 `.env`，按需填写：
+---
 
-| 变量 | 说明 | 是否必填 |
-|------|------|----------|
-| `LLM_PROVIDER` | 默认提供商：`anthropic` / `openai` / `custom` | 否（默认 anthropic）|
-| `ANTHROPIC_API_KEY` | Claude API Key | 二选一 |
-| `OPENAI_API_KEY` | OpenAI / 兼容接口 Key（DeepSeek、MiniMax 等）| 二选一 |
-| `OPENAI_BASE_URL` | 自定义 API 地址，如 `https://api.deepseek.com/v1` | 否 |
-| `GITHUB_TOKEN` | GitHub Token，提高抓取 compose/env 文件的速率限制 | 否 |
-| `BACKEND_PORT` | 后端端口（本地开发用）| 否（默认 8088）|
+## 环境变量
 
-> 💡 也可以在启动后通过 **设置页面** 可视化管理 LLM 配置，支持热切换无需重启。
-
-## 🛠️ 技术栈
-
-| 层级 | 技术 |
+| 变量 | 说明 |
 |------|------|
-| 前端 | React + TypeScript + Vite + TailwindCSS + Framer Motion + Recharts |
-| 后端 | Python + FastAPI + WebSocket + SQLAlchemy + SQLite |
-| AI | Anthropic Claude / OpenAI 兼容接口（可配置多 Provider）|
-| Docker | Python docker SDK（挂载 `/var/run/docker.sock`）|
-| 部署 | Docker Compose + GitHub Actions 自动构建 |
+| `ANTHROPIC_API_KEY` | Claude API Key（与 OpenAI 二选一）|
+| `OPENAI_API_KEY` | OpenAI 或兼容接口的 Key |
+| `OPENAI_BASE_URL` | 自定义接口地址，如 `https://api.deepseek.com/v1` |
+| `LLM_PROVIDER` | 默认提供商：`anthropic` / `openai`（也可在界面切换）|
+| `GITHUB_TOKEN` | 可选，提高从 GitHub 抓取文件的速率限制 |
 
-## 📁 项目结构
+启动后也可以在**设置页面**直接管理，支持添加多个 Provider 并热切换，不用改配置文件。
+
+---
+
+## 技术栈
+
+| | |
+|---|---|
+| 前端 | React · TypeScript · Vite · TailwindCSS · Framer Motion · Recharts |
+| 后端 | Python · FastAPI · WebSocket · SQLAlchemy · SQLite |
+| AI | 支持 Anthropic Claude 和任意 OpenAI 兼容接口 |
+| Docker | Python docker SDK，通过挂载 socket 直接控制宿主机 |
+| 部署 | 单容器多阶段构建，GitHub Actions 自动发布镜像 |
+
+---
+
+## 想用便宜好用的 LLM API？
+
+这个项目支持任意 OpenAI 兼容接口，以下是我自己在用的：
+
+**[硅基流动 SiliconFlow](https://cloud.siliconflow.cn/i/lRKL1QBS)** — DeepSeek、Qwen、GLM 等主流开源模型，注册送 2000 万 Tokens，性价比很高，新用户可以直接免费跑起来。
+
+**[MiniMax](https://platform.minimaxi.com/subscribe/coding-plan?code=4xo0BLjAak&source=link)** — 国内自研大模型，有专门面向开发者的套餐，响应速度快，适合做工具类应用。
+
+在本项目设置页面填入对应的 Base URL 和 API Key 即可直接使用。
+
+---
+
+## 项目结构
 
 ```
-docker-agent/
-├── backend/              # FastAPI 后端
+DockerAgent/
+├── backend/
 │   ├── app/
-│   │   ├── api/          # REST API 路由（docker, agent, settings...）
-│   │   ├── core/         # 核心逻辑（agent_engine, llm_client, webfetch...）
-│   │   ├── db/           # 数据库模型
-│   │   └── mcp/          # 工具定义（Docker MCP Tools）
+│   │   ├── api/        # REST + WebSocket 接口
+│   │   ├── core/       # Agent 引擎、LLM 客户端、Webfetch、记忆系统
+│   │   ├── db/         # 数据库模型
+│   │   └── mcp/        # Docker 工具定义
 │   └── main.py
-├── frontend/             # React 前端
+├── frontend/
 │   └── src/
-│       ├── pages/        # 页面（Dashboard, Chat, Settings...）
-│       ├── hooks/        # useAgent（WebSocket 通信）
-│       └── lib/          # store, api, utils
-├── .env.example          # 环境变量模板
-├── docker-compose.yml    # 一键部署
-└── dev.sh                # 本地开发启动脚本
+│       ├── pages/      # Dashboard、Chat、Settings 等页面
+│       ├── hooks/      # WebSocket 通信、Docker 数据
+│       └── lib/        # 状态管理、API 客户端
+├── Dockerfile          # 多阶段构建（前端 + 后端合一）
+├── docker-compose.yml
+├── .env.example
+└── dev.sh              # 本地一键启动脚本
 ```
 
-## 🔌 API 文档
+---
 
-启动后访问 `http://localhost:8088/docs` 查看完整的交互式 API 文档。
+## License
 
-## 🤝 贡献
-
-欢迎 PR 和 Issue！
-
-## 📄 License
-
-MIT
+MIT — 随便用，随便改，做了好东西记得分享。
