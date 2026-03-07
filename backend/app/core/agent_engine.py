@@ -275,13 +275,14 @@ class AgentEngine:
             elif tool_name == "deploy_with_compose":
                 import os
                 import subprocess
-                import tempfile
 
                 project_name = re.sub(r"[^a-z0-9_-]", "-", tool_input["project_name"].lower())
                 compose_content = tool_input["compose_content"]
                 env_vars: Dict[str, str] = tool_input.get("env_vars") or {}
 
                 # 在 /opt/docker-projects/<project_name> 下创建工作目录
+                # 注意：该目录必须通过宿主机卷映射同步存在，否则相对路径 volume 挂载会失效
+                # docker-compose.yml 中需配置: - /opt/docker-projects:/opt/docker-projects
                 work_dir = f"/opt/docker-projects/{project_name}"
                 os.makedirs(work_dir, exist_ok=True)
 
@@ -297,30 +298,65 @@ class AgentEngine:
                         for k, v in env_vars.items():
                             f.write(f'{k}={v}\n')
 
-                # 执行 docker-compose up -d
+                # 超时配置：COMPOSE_PULL_TIMEOUT（拉取镜像），COMPOSE_UP_TIMEOUT（启动容器）
+                # 设置为 0 表示不限时；大型 LLM 镜像建议设置较大值或置 0
+                _pull_timeout_raw = os.environ.get("COMPOSE_PULL_TIMEOUT", "0").strip()
+                _up_timeout_raw = os.environ.get("COMPOSE_UP_TIMEOUT", "120").strip()
+                pull_timeout: Optional[int] = int(_pull_timeout_raw) or None
+                up_timeout: Optional[int] = int(_up_timeout_raw) or None
+
+                # ── 步骤 1：拉取镜像（与启动解耦，单独超时控制）──────────────
                 try:
-                    proc = subprocess.run(
-                        ["docker", "compose", "-p", project_name, "up", "-d", "--pull", "always"],
+                    pull_proc = subprocess.run(
+                        ["docker", "compose", "-p", project_name, "pull"],
                         cwd=work_dir,
                         capture_output=True,
                         text=True,
-                        timeout=300,
+                        timeout=pull_timeout,
                     )
-                    output = (proc.stdout + proc.stderr).strip()
-                    if proc.returncode == 0:
+                    pull_output = (pull_proc.stdout + pull_proc.stderr).strip()
+                    if pull_proc.returncode != 0:
+                        return (
+                            f"镜像拉取失败（退出码 {pull_proc.returncode}）。\n"
+                            f"工作目录：{work_dir}\n"
+                            f"错误输出：\n{pull_output[-3000:] if len(pull_output) > 3000 else pull_output}"
+                        )
+                except subprocess.TimeoutExpired:
+                    timeout_hint = f"{pull_timeout} 秒" if pull_timeout else "默认"
+                    return (
+                        f"镜像拉取超时（{timeout_hint}）。\n"
+                        f"如需部署大型镜像（如 vLLM / CUDA），请在 .env 中设置 "
+                        f"COMPOSE_PULL_TIMEOUT=0（不限时）后重试。"
+                    )
+
+                # ── 步骤 2：启动容器（镜像已本地缓存，启动应很快）───────────
+                try:
+                    up_proc = subprocess.run(
+                        ["docker", "compose", "-p", project_name, "up", "-d"],
+                        cwd=work_dir,
+                        capture_output=True,
+                        text=True,
+                        timeout=up_timeout,
+                    )
+                    up_output = (up_proc.stdout + up_proc.stderr).strip()
+                    if up_proc.returncode == 0:
                         return (
                             f"部署成功！项目 `{project_name}` 已启动。\n"
                             f"工作目录：{work_dir}\n"
-                            f"输出：\n{output[-2000:] if len(output) > 2000 else output}"
+                            f"输出：\n{up_output[-2000:] if len(up_output) > 2000 else up_output}"
                         )
                     else:
                         return (
-                            f"部署失败（退出码 {proc.returncode}）。\n"
+                            f"部署失败（退出码 {up_proc.returncode}）。\n"
                             f"工作目录：{work_dir}\n"
-                            f"错误输出：\n{output[-3000:] if len(output) > 3000 else output}"
+                            f"错误输出：\n{up_output[-3000:] if len(up_output) > 3000 else up_output}"
                         )
                 except subprocess.TimeoutExpired:
-                    return "部署超时（5分钟），请检查网络连接或镜像拉取情况，可以手动运行 `docker compose logs` 查看详情。"
+                    return (
+                        f"容器启动超时（{up_timeout} 秒）。镜像已拉取完成，"
+                        f"可手动执行 `docker compose -p {project_name} up -d` 或查看 "
+                        f"`docker compose -p {project_name} logs` 排查原因。"
+                    )
 
             elif tool_name == "save_memory":
                 await memory_manager.set_memory(

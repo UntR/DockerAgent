@@ -26,12 +26,24 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - DB_PATH=/data/docker_agent.db
+      # 访问令牌（设置后，所有 API 请求均需携带；留空则跳过鉴权）
+      - ACCESS_TOKEN=${ACCESS_TOKEN:-}
+      # 允许的跨域来源，逗号分隔（留空默认 *，仅限内网）
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      # Compose 部署超时：0 = 不限时（适合大型 LLM 镜像）
+      - COMPOSE_PULL_TIMEOUT=${COMPOSE_PULL_TIMEOUT:-0}
+      - COMPOSE_UP_TIMEOUT=${COMPOSE_UP_TIMEOUT:-120}
     volumes:
       # ⚠️ 必须挂载，Agent 才能控制宿主机 Docker
       # Linux：
       - /var/run/docker.sock:/var/run/docker.sock
       # Docker Desktop for Mac/Windows（取消注释上面那行，改用这行）：
       # - ~/.docker/desktop/docker.sock:/var/run/docker.sock
+      # ⚠️ 必须挂载（DoOD 架构关键）：
+      # Agent 容器内写入 /opt/docker-projects/<project>/ 的 compose 文件
+      # 会由宿主机 Docker Daemon 解析相对路径卷映射，因此该目录必须在宿主机上真实存在，
+      # 且路径与容器内完全一致（一比一映射），否则相对路径 volume 挂载全部失效。
+      - /opt/docker-projects:/opt/docker-projects
       # 持久化数据（对话历史、LLM 配置、快照）
       - docker-agent-data:/data
 
