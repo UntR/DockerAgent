@@ -60,6 +60,7 @@ docker run -d \
   --name docker-agent \
   -p 3000:8088 \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /opt/docker-projects:/opt/docker-projects \
   -v docker-agent-data:/data \
   -e ANTHROPIC_API_KEY=your_key_here \
   rcpn7/docker-agent:latest
@@ -168,4 +169,4 @@ DockerAgent/
 
 ## License
 
-MIT — 随便用，随便改，做了好东西记得分享。
+MIT
