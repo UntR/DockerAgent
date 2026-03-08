@@ -91,7 +91,7 @@ class DockerManager:
                 "state": c.attrs.get("State", {}),
                 "ports": ports,
                 "created": c.attrs.get("Created", ""),
-                "networks": list(c.attrs.get("NetworkSettings", {}).get("Networks", {}).keys()),
+                "networks": list((c.attrs.get("NetworkSettings") or {}).get("Networks") or {}).keys()),
                 "labels": c.labels,
             })
         return result
@@ -110,7 +110,7 @@ class DockerManager:
             "created": c.attrs.get("Created", ""),
             "config": c.attrs.get("Config", {}),
             "host_config": c.attrs.get("HostConfig", {}),
-            "networks": c.attrs.get("NetworkSettings", {}).get("Networks", {}),
+            "networks": (c.attrs.get("NetworkSettings") or {}).get("Networks") or {},
             "mounts": c.attrs.get("Mounts", []),
         }
 
@@ -235,7 +235,7 @@ class DockerManager:
                 "driver": n.attrs.get("Driver", ""),
                 "scope": n.attrs.get("Scope", ""),
                 "created": n.attrs.get("Created", ""),
-                "containers": list(n.attrs.get("Containers", {}).keys()),
+                "containers": list((n.attrs.get("Containers") or {}).keys()),
             }
             for n in networks
         ]
