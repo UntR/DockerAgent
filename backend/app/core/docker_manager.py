@@ -92,7 +92,7 @@ class DockerManager:
                 "state": attrs.get("State") or {},
                 "ports": ports,
                 "created": attrs.get("Created") or "",
-                "networks": list((attrs.get("NetworkSettings") or {}).get("Networks") or {}).keys()),
+                "networks": list(((attrs.get("NetworkSettings") or {}).get("Networks") or {}).keys()),
                 "labels": c.labels or {},
             })
         return result
