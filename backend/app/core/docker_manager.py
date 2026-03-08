@@ -75,6 +75,7 @@ class DockerManager:
         containers = await loop.run_in_executor(None, lambda: self.client.containers.list(all=all))
         result = []
         for c in containers:
+            attrs = c.attrs if c.attrs is not None else {}
             ports = {}
             if c.ports:
                 for k, v in c.ports.items():
@@ -88,30 +89,31 @@ class DockerManager:
                 "name": c.name,
                 "image": c.image.tags[0] if c.image.tags else c.image.short_id,
                 "status": c.status,
-                "state": c.attrs.get("State", {}),
+                "state": attrs.get("State") or {},
                 "ports": ports,
-                "created": c.attrs.get("Created", ""),
-                "networks": list((c.attrs.get("NetworkSettings") or {}).get("Networks") or {}).keys()),
-                "labels": c.labels,
+                "created": attrs.get("Created") or "",
+                "networks": list((attrs.get("NetworkSettings") or {}).get("Networks") or {}).keys()),
+                "labels": c.labels or {},
             })
         return result
 
     async def get_container(self, container_id: str) -> Dict[str, Any]:
         loop = asyncio.get_event_loop()
         c = await loop.run_in_executor(None, lambda: self.client.containers.get(container_id))
+        attrs = c.attrs if c.attrs is not None else {}
         return {
             "id": c.short_id,
             "full_id": c.id,
             "name": c.name,
             "image": c.image.tags[0] if c.image.tags else c.image.short_id,
             "status": c.status,
-            "state": c.attrs.get("State", {}),
-            "ports": c.ports,
-            "created": c.attrs.get("Created", ""),
-            "config": c.attrs.get("Config", {}),
-            "host_config": c.attrs.get("HostConfig", {}),
-            "networks": (c.attrs.get("NetworkSettings") or {}).get("Networks") or {},
-            "mounts": c.attrs.get("Mounts", []),
+            "state": attrs.get("State") or {},
+            "ports": c.ports or {},
+            "created": attrs.get("Created") or "",
+            "config": attrs.get("Config") or {},
+            "host_config": attrs.get("HostConfig") or {},
+            "networks": (attrs.get("NetworkSettings") or {}).get("Networks") or {},
+            "mounts": attrs.get("Mounts") or [],
         }
 
     async def start_container(self, container_id: str) -> bool:
@@ -227,18 +229,19 @@ class DockerManager:
     async def list_networks(self) -> List[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
         networks = await loop.run_in_executor(None, self.client.networks.list)
-        return [
-            {
-                "id": n.short_id,
-                "full_id": n.id,
-                "name": n.name,
-                "driver": n.attrs.get("Driver", ""),
-                "scope": n.attrs.get("Scope", ""),
-                "created": n.attrs.get("Created", ""),
-                "containers": list((n.attrs.get("Containers") or {}).keys()),
-            }
-            for n in networks
-        ]
+        result = []
+        for n in networks:
+            attrs = n.attrs if n.attrs is not None else {}
+            result.append({
+                "id": getattr(n, "short_id", "") or "",
+                "full_id": getattr(n, "id", "") or "",
+                "name": getattr(n, "name", "") or "",
+                "driver": attrs.get("Driver") or "",
+                "scope": attrs.get("Scope") or "",
+                "created": attrs.get("Created") or "",
+                "containers": list((attrs.get("Containers") or {}).keys()),
+            })
+        return result
 
     async def create_network(self, name: str, driver: str = "bridge") -> Dict[str, Any]:
         loop = asyncio.get_event_loop()
