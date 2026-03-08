@@ -2,6 +2,7 @@
 Agent 引擎：Tool Calling 主循环，处理用户对话并调用 Docker 工具。
 """
 import json
+import os
 import re
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -20,6 +21,24 @@ from app.core.app_dependency import (
     get_dependencies_for,
 )
 from app.mcp.docker_mcp import DOCKER_TOOLS
+
+
+def _fix_ownership(path: str) -> None:
+    """根据 PUID/PGID 环境变量递归修正文件所有权，使宿主机普通用户可读写。"""
+    puid = os.environ.get("PUID", "").strip()
+    pgid = os.environ.get("PGID", "").strip()
+    if not puid and not pgid:
+        return
+    uid = int(puid) if puid else -1
+    gid = int(pgid) if pgid else -1
+    try:
+        for root, dirs, files in os.walk(path):
+            os.chown(root, uid, gid)
+            for name in files:
+                os.chown(os.path.join(root, name), uid, gid)
+    except OSError:
+        pass
+
 
 SYSTEM_PROMPT = """你是一个专业的 Docker 管理助手，名叫 DockerAgent。
 
@@ -273,30 +292,30 @@ class AgentEngine:
                 return "\n".join(lines)
 
             elif tool_name == "deploy_with_compose":
-                import os
                 import subprocess
 
                 project_name = re.sub(r"[^a-z0-9_-]", "-", tool_input["project_name"].lower())
                 compose_content = tool_input["compose_content"]
                 env_vars: Dict[str, str] = tool_input.get("env_vars") or {}
 
-                # 在 /opt/docker-projects/<project_name> 下创建工作目录
-                # 注意：该目录必须通过宿主机卷映射同步存在，否则相对路径 volume 挂载会失效
-                # docker-compose.yml 中需配置: - /opt/docker-projects:/opt/docker-projects
-                work_dir = f"/opt/docker-projects/{project_name}"
+                base_dir = os.environ.get("PROJECTS_BASE_DIR", "/opt/docker-projects")
+                work_dir = os.path.join(base_dir, project_name)
                 os.makedirs(work_dir, exist_ok=True)
 
-                # 写 docker-compose.yml
                 compose_path = os.path.join(work_dir, "docker-compose.yml")
                 with open(compose_path, "w", encoding="utf-8") as f:
                     f.write(compose_content)
 
-                # 写 .env 文件
                 if env_vars:
                     env_path = os.path.join(work_dir, ".env")
                     with open(env_path, "w", encoding="utf-8") as f:
                         for k, v in env_vars.items():
-                            f.write(f'{k}={v}\n')
+                            val = str(v)
+                            if any(c in val for c in (' ', '"', "'", '\\', '\n', '#', '=')):
+                                val = '"' + val.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
+                            f.write(f'{k}={val}\n')
+
+                _fix_ownership(work_dir)
 
                 # 超时配置：COMPOSE_PULL_TIMEOUT（拉取镜像），COMPOSE_UP_TIMEOUT（启动容器）
                 # 设置为 0 表示不限时；大型 LLM 镜像建议设置较大值或置 0

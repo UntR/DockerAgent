@@ -33,6 +33,11 @@ services:
       # Compose 部署超时：0 = 不限时（适合大型 LLM 镜像）
       - COMPOSE_PULL_TIMEOUT=${COMPOSE_PULL_TIMEOUT:-0}
       - COMPOSE_UP_TIMEOUT=${COMPOSE_UP_TIMEOUT:-120}
+      # 项目工作目录基路径（容器内路径，须与 volumes 映射保持一致）
+      - PROJECTS_BASE_DIR=${PROJECTS_BASE_DIR:-/opt/docker-projects}
+      # 文件所有权：写入宿主机的文件将 chown 为该 UID/GID，使普通用户可修改
+      - PUID=${PUID:-}
+      - PGID=${PGID:-}
     volumes:
       # ⚠️ 必须挂载，Agent 才能控制宿主机 Docker
       # Linux：
@@ -40,10 +45,11 @@ services:
       # Docker Desktop for Mac/Windows（取消注释上面那行，改用这行）：
       # - ~/.docker/desktop/docker.sock:/var/run/docker.sock
       # ⚠️ 必须挂载（DoOD 架构关键）：
-      # Agent 容器内写入 /opt/docker-projects/<project>/ 的 compose 文件
-      # 会由宿主机 Docker Daemon 解析相对路径卷映射，因此该目录必须在宿主机上真实存在，
-      # 且路径与容器内完全一致（一比一映射），否则相对路径 volume 挂载全部失效。
-      - /opt/docker-projects:/opt/docker-projects
+      # Agent 容器内写入的 compose 文件由宿主机 Docker Daemon 解析相对路径卷映射，
+      # 因此该目录必须在宿主机上真实存在且路径与容器内一致（一比一映射）。
+      # NAS 等无 /opt 目录的环境可改为其他路径（两侧须一致），
+      # 并同步设置 PROJECTS_BASE_DIR 环境变量。
+      - ${PROJECTS_BASE_DIR:-/opt/docker-projects}:${PROJECTS_BASE_DIR:-/opt/docker-projects}
       # 持久化数据（对话历史、LLM 配置、快照）
       - docker-agent-data:/data
 

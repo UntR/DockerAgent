@@ -61,9 +61,9 @@ app.add_middleware(
 
 
 # ── API 鉴权中间件 ──────────────────────────────────────────────────────────────
-# ACCESS_TOKEN: 设置后，所有 /api/* 请求（WebSocket 除外）都必须携带该 Token
-# HTTP 请求：Authorization: Bearer <token>  或  X-API-Key: <token>
-# WebSocket：ws://host/api/agent/chat/ws/{id}?token=<token>
+# ACCESS_TOKEN: 设置后，所有 /api/* 请求均需携带该 Token
+# HTTP：Authorization: Bearer <token>  或  X-API-Key: <token>
+# WebSocket 握手：?token=<token> 查询参数（在中间件层统一校验）
 # 留空则跳过鉴权（向后兼容，仅推荐纯内网环境）
 _ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "").strip()
 
@@ -85,11 +85,17 @@ async def auth_middleware(request: Request, call_next):
     if path in _AUTH_SKIP_PATHS:
         return await call_next(request)
 
-    # WebSocket 握手通过 ?token= 查询参数携带，此处放行由端点内部验证
+    # WebSocket 握手：从查询参数 ?token= 提取并校验，拒绝时返回 403
     if request.headers.get("upgrade", "").lower() == "websocket":
+        ws_token = request.query_params.get("token", "")
+        if ws_token != _ACCESS_TOKEN:
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "未授权：WebSocket 握手缺少有效的 token 参数"},
+            )
         return await call_next(request)
 
-    # 从 Authorization Bearer 或 X-API-Key 提取 token
+    # HTTP 请求：从 Authorization Bearer 或 X-API-Key 提取 token
     token = ""
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):

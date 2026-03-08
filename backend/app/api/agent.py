@@ -1,7 +1,6 @@
 import json
-import os
 import uuid
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
@@ -11,24 +10,13 @@ from app.models.schemas import AgentChatRequest
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-_ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "").strip()
-
 
 @router.websocket("/chat/ws/{session_id}")
-async def chat_websocket(
-    websocket: WebSocket,
-    session_id: str,
-    token: str = Query(default=""),
-):
+async def chat_websocket(websocket: WebSocket, session_id: str):
     """WebSocket 流式对话接口。
     
-    若服务器配置了 ACCESS_TOKEN，需通过查询参数传入：
-    ws://host/api/agent/chat/ws/{session_id}?token=<ACCESS_TOKEN>
+    鉴权由 main.py 中间件统一处理（从 ?token= 查询参数校验 ACCESS_TOKEN）。
     """
-    if _ACCESS_TOKEN and token != _ACCESS_TOKEN:
-        await websocket.close(code=4401, reason="未授权：Access Token 无效")
-        return
-
     await websocket.accept()
     from app.db.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
