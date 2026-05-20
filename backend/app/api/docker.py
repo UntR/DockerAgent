@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any, Dict, List
 
 from app.db.database import get_db
 from app.core.docker_manager import docker_manager
+from app.core.confirmation import build_confirmation_required, is_confirmed
 from app.models.schemas import (
     ContainerAction,
     RunContainerRequest,
@@ -13,6 +15,13 @@ from app.models.schemas import (
 )
 
 router = APIRouter(prefix="/docker", tags=["docker"])
+
+
+def _confirmation_response(action: str, target: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=build_confirmation_required(action, target, message),
+    )
 
 
 # ── 系统信息 ──────────────────────────────────────────────
@@ -112,7 +121,9 @@ async def get_container(container_id: str):
 
 
 @router.post("/containers/{container_id}/start")
-async def start_container(container_id: str):
+async def start_container(container_id: str, confirmation: str = ""):
+    if not is_confirmed(confirmation):
+        return _confirmation_response("start_container", container_id, f"启动容器 {container_id}")
     try:
         await docker_manager.start_container(container_id)
         return {"success": True, "message": f"容器 {container_id} 已启动"}
@@ -121,7 +132,9 @@ async def start_container(container_id: str):
 
 
 @router.post("/containers/{container_id}/stop")
-async def stop_container(container_id: str):
+async def stop_container(container_id: str, confirmation: str = ""):
+    if not is_confirmed(confirmation):
+        return _confirmation_response("stop_container", container_id, f"停止容器 {container_id}")
     try:
         await docker_manager.stop_container(container_id)
         return {"success": True, "message": f"容器 {container_id} 已停止"}
@@ -130,7 +143,9 @@ async def stop_container(container_id: str):
 
 
 @router.post("/containers/{container_id}/restart")
-async def restart_container(container_id: str):
+async def restart_container(container_id: str, confirmation: str = ""):
+    if not is_confirmed(confirmation):
+        return _confirmation_response("restart_container", container_id, f"重启容器 {container_id}")
     try:
         await docker_manager.restart_container(container_id)
         return {"success": True, "message": f"容器 {container_id} 已重启"}
@@ -139,7 +154,9 @@ async def restart_container(container_id: str):
 
 
 @router.delete("/containers/{container_id}")
-async def remove_container(container_id: str, force: bool = False):
+async def remove_container(container_id: str, force: bool = False, confirmation: str = ""):
+    if not is_confirmed(confirmation):
+        return _confirmation_response("remove_container", container_id, f"删除容器 {container_id}")
     try:
         await docker_manager.remove_container(container_id, force=force)
         return {"success": True, "message": f"容器 {container_id} 已删除"}
@@ -166,6 +183,8 @@ async def get_container_stats(container_id: str):
 
 @router.post("/containers/run")
 async def run_container(req: RunContainerRequest):
+    if not is_confirmed(req.confirmation):
+        return _confirmation_response("run_container", req.name or req.image, f"运行新容器 {req.name or req.image}")
     try:
         return await docker_manager.run_container(
             image=req.image,
@@ -201,7 +220,9 @@ async def pull_image(req: PullImageRequest):
 
 
 @router.delete("/images/{image_id}")
-async def remove_image(image_id: str, force: bool = False):
+async def remove_image(image_id: str, force: bool = False, confirmation: str = ""):
+    if not is_confirmed(confirmation):
+        return _confirmation_response("remove_image", image_id, f"删除镜像 {image_id}")
     try:
         await docker_manager.remove_image(image_id, force=force)
         return {"success": True, "message": f"镜像 {image_id} 已删除"}
@@ -228,7 +249,9 @@ async def create_network(req: CreateNetworkRequest):
 
 
 @router.delete("/networks/{network_id}")
-async def remove_network(network_id: str):
+async def remove_network(network_id: str, confirmation: str = ""):
+    if not is_confirmed(confirmation):
+        return _confirmation_response("remove_network", network_id, f"删除网络 {network_id}")
     try:
         await docker_manager.remove_network(network_id)
         return {"success": True, "message": f"网络 {network_id} 已删除"}
@@ -264,7 +287,9 @@ async def create_volume(req: CreateVolumeRequest):
 
 
 @router.delete("/volumes/{name}")
-async def remove_volume(name: str):
+async def remove_volume(name: str, confirmation: str = ""):
+    if not is_confirmed(confirmation):
+        return _confirmation_response("remove_volume", name, f"删除数据卷 {name}")
     try:
         await docker_manager.remove_volume(name)
         return {"success": True, "message": f"数据卷 {name} 已删除"}

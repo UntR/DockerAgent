@@ -58,7 +58,7 @@
 ```bash
 docker run -d \
   --name docker-agent \
-  -p 3000:8088 \
+  -p 127.0.0.1:3000:8088 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /opt/docker-projects:/opt/docker-projects \
   -v docker-agent-data:/data \
@@ -67,6 +67,10 @@ docker run -d \
 ```
 
 然后打开 [http://localhost:3000](http://localhost:3000)。
+
+默认只绑定本机地址。未设置 `ACCESS_TOKEN` 时，后端也只接受
+`localhost` / `127.0.0.1` / `::1` Host 访问，避免误把 Docker 控制面暴露到公网。
+如果设置了 `ACCESS_TOKEN`，前端会在首次 API 未授权时提示输入，并在之后自动携带。
 
 > 没有 Anthropic key？支持 DeepSeek、MiniMax、Kimi 等任何 OpenAI 兼容接口。启动后在**设置页面**配置即可，无需重启。
 
@@ -103,6 +107,26 @@ bash dev.sh
 ```
 
 环境要求：Python 3.10+、Node.js 18+、Docker
+
+---
+
+## 端到端部署样例
+
+仓库内置了一个最小 Nginx Compose 样例：
+
+```text
+examples/nginx-demo/
+```
+
+你可以把 `examples/nginx-demo/docker-compose.yml` 和 `.env.example` 的内容交给 AI 助手，让它按正常流程执行：
+
+1. 分析 Compose 和环境变量
+2. 展示部署前预检和危险操作确认
+3. 创建部署前快照
+4. 写入 Compose / Env 并执行部署
+5. 在“应用”页查看访问地址、容器、日志和关联快照
+
+默认访问地址是 [http://localhost:18080](http://localhost:18080)。
 
 ---
 
@@ -161,6 +185,7 @@ DockerAgent/
 │       └── lib/        # 状态管理、API 客户端
 ├── Dockerfile          # 多阶段构建（前端 + 后端合一）
 ├── docker-compose.yml
+├── examples/           # 端到端部署样例
 ├── .env.example
 └── dev.sh              # 本地一键启动脚本
 ```

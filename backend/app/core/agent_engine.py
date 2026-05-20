@@ -5,7 +5,7 @@ import json
 import os
 import re
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,10 @@ from app.core.docker_manager import docker_manager
 from app.core.memory import memory_manager
 from app.core.webfetch import web_fetcher
 from app.core.rollback_manager import rollback_manager
+from app.core.confirmation import build_confirmation_required
+from app.core.compose_preflight import analyze_compose
+from app.core.app_registry import build_app_record, upsert_managed_app
+from app.core.deploy_result import build_deploy_success_result
 from app.core.app_dependency import (
     APP_DESCRIPTIONS,
     normalize_name,
@@ -88,6 +92,20 @@ SYSTEM_PROMPT = """你是一个专业的 Docker 管理助手，名叫 DockerAgen
 
 
 class AgentEngine:
+    DANGEROUS_TOOLS: Set[str] = {
+        "start_container",
+        "stop_container",
+        "restart_container",
+        "remove_container",
+        "run_container",
+        "remove_image",
+        "remove_network",
+        "deploy_with_compose",
+    }
+
+    def __init__(self):
+        self._pending_confirmations: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._confirmed_tokens: Dict[str, Set[str]] = {}
 
     async def _build_system_prompt(self, db: AsyncSession) -> str:
         memory_ctx = await memory_manager.build_memory_context(db)
@@ -109,6 +127,10 @@ class AgentEngine:
     ) -> str:
         """执行工具调用，返回结果字符串。"""
         try:
+            confirmation_required = self._check_tool_confirmation(tool_name, tool_input, session_id)
+            if confirmation_required:
+                return confirmation_required
+
             if tool_name == "list_containers":
                 result = await docker_manager.list_containers(all=tool_input.get("all", True))
                 # 丰富容器描述
@@ -252,6 +274,9 @@ class AgentEngine:
 
                 if analysis.get("has_compose"):
                     lines += ["## docker-compose.yml 内容", "```yaml", analysis["compose_content"], "```", ""]
+                    preflight_text = self._format_preflight(analysis.get("preflight") or {})
+                    if preflight_text:
+                        lines += ["## 部署前预检", preflight_text, ""]
                 else:
                     lines += ["## 注意", "该仓库没有找到 docker-compose.yml，需要手动构建部署方式", ""]
 
@@ -300,6 +325,34 @@ class AgentEngine:
 
                 base_dir = os.environ.get("PROJECTS_BASE_DIR", "/opt/docker-projects")
                 work_dir = os.path.join(base_dir, project_name)
+                occupied_ports = await self._get_occupied_host_ports()
+                preflight = analyze_compose(
+                    compose_content,
+                    env_vars=env_vars,
+                    work_dir=work_dir,
+                    occupied_ports=occupied_ports,
+                )
+                blocking_warnings = [
+                    w for w in preflight.get("warnings", [])
+                    if w.get("code") == "port_conflict"
+                ]
+                if blocking_warnings:
+                    return (
+                        "部署前预检失败，尚未写入文件或执行 compose。\n"
+                        f"{self._format_preflight({'warnings': blocking_warnings})}"
+                    )
+
+                try:
+                    await rollback_manager.take_snapshot(
+                        db,
+                        name=f"部署前 - {project_name}",
+                        description=f"执行 Compose 部署 {project_name} 前自动快照",
+                        is_auto=True,
+                        compose_project=project_name,
+                    )
+                except Exception as e:
+                    return f"部署前快照失败，尚未写入文件或执行 compose：{str(e)}"
+
                 os.makedirs(work_dir, exist_ok=True)
 
                 compose_path = os.path.join(work_dir, "docker-compose.yml")
@@ -359,10 +412,30 @@ class AgentEngine:
                     )
                     up_output = (up_proc.stdout + up_proc.stderr).strip()
                     if up_proc.returncode == 0:
-                        return (
-                            f"部署成功！项目 `{project_name}` 已启动。\n"
-                            f"工作目录：{work_dir}\n"
-                            f"输出：\n{up_output[-2000:] if len(up_output) > 2000 else up_output}"
+                        access_urls = preflight.get("access_urls") or []
+                        env_path_value = os.path.join(work_dir, ".env") if env_vars else ""
+                        app_id = None
+                        app_record = build_app_record(
+                            name=tool_input.get("display_name") or project_name,
+                            compose_project=project_name,
+                            work_dir=work_dir,
+                            compose_path=compose_path,
+                            env_path=env_path_value,
+                            source_url=tool_input.get("source_url") or "",
+                            access_urls=access_urls,
+                        )
+                        try:
+                            app = await upsert_managed_app(db, app_record)
+                            app_id = app.id
+                        except Exception:
+                            pass
+
+                        return build_deploy_success_result(
+                            project_name=project_name,
+                            work_dir=work_dir,
+                            access_urls=access_urls,
+                            compose_output=up_output,
+                            app_id=app_id,
                         )
                     else:
                         return (
@@ -406,6 +479,7 @@ class AgentEngine:
           {"type": "tool_result", "id": ..., "result": ..., "is_error": False}
           {"type": "chunk",       "content": "..."}        # 最终回复流式片段
         """
+        self._mark_confirmed_tokens(session_id, user_message)
         enriched_message = await self._enrich_with_dependency_hints(
             db, user_message, session_id
         )
@@ -453,10 +527,13 @@ class AgentEngine:
 
             # ── 有工具调用 → 执行工具并发送结构化事件 ──────────────────
             tool_result_map: Dict[str, str] = {}
+            executed_tool_calls: List[Dict[str, Any]] = []
+            confirmation_requested: Optional[Dict[str, Any]] = None
 
             for tc in response["tool_calls"]:
                 tool_id = tc["id"]
                 tool_name = tc["name"]
+                executed_tool_calls.append(tc)
 
                 yield {
                     "type": "tool_start",
@@ -469,6 +546,9 @@ class AgentEngine:
                 result_str = await self._execute_tool(tool_name, tc["input"], db, session_id)
                 is_error = result_str.startswith("工具执行出错")
                 tool_result_map[tool_id] = result_str
+                parsed_result = self._parse_json_object(result_str)
+                if parsed_result.get("requires_confirmation"):
+                    confirmation_requested = parsed_result
 
                 yield {
                     "type": "tool_result",
@@ -477,25 +557,40 @@ class AgentEngine:
                     "is_error": is_error,
                 }
 
+                if confirmation_requested:
+                    break
+
             # 保存到 DB
             await memory_manager.save_message(
                 db, session_id, "assistant",
                 response["content"],
-                tool_calls=response["tool_calls"],
+                tool_calls=executed_tool_calls,
             )
-            for tc in response["tool_calls"]:
+            for tc in executed_tool_calls:
                 await memory_manager.save_message(
                     db, session_id, "tool",
                     tool_result_map[tc["id"]],
                     tool_call_id=tc["id"],
                 )
 
+            if confirmation_requested:
+                confirmation = confirmation_requested.get("confirmation", {})
+                prompt = confirmation.get("user_prompt", "")
+                message = confirmation.get("message", "该操作需要确认")
+                content = (
+                    f"\n{message}。\n"
+                    f"如果确认要执行，请回复：`{prompt}`\n"
+                )
+                await memory_manager.save_message(db, session_id, "assistant", content)
+                yield {"type": "chunk", "content": content}
+                return
+
             # ── 按 provider 格式追加消息，让下一轮 LLM 能看到工具结果 ──
             if is_anthropic:
                 assistant_content: List[Dict[str, Any]] = []
                 if response["content"]:
                     assistant_content.append({"type": "text", "text": response["content"]})
-                for tc in response["tool_calls"]:
+                for tc in executed_tool_calls:
                     assistant_content.append({
                         "type": "tool_use",
                         "id": tc["id"],
@@ -504,7 +599,7 @@ class AgentEngine:
                     })
                 tool_results_block = [
                     {"type": "tool_result", "tool_use_id": tc["id"], "content": tool_result_map[tc["id"]]}
-                    for tc in response["tool_calls"]
+                    for tc in executed_tool_calls
                 ]
                 messages.append({"role": "assistant", "content": assistant_content})
                 messages.append({"role": "user", "content": tool_results_block})
@@ -522,10 +617,10 @@ class AgentEngine:
                                 "arguments": json.dumps(tc["input"], ensure_ascii=False),
                             },
                         }
-                        for tc in response["tool_calls"]
+                        for tc in executed_tool_calls
                     ],
                 })
-                for tc in response["tool_calls"]:
+                for tc in executed_tool_calls:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
@@ -646,6 +741,186 @@ class AgentEngine:
             "save_memory": "保存记忆",
         }
         return names.get(tool_name, tool_name)
+
+    def _mark_confirmed_tokens(self, session_id: str, user_message: str) -> None:
+        pending = self._pending_confirmations.get(session_id, {})
+        if not pending:
+            return
+        confirmed = self._confirmed_tokens.setdefault(session_id, set())
+        for token in re.findall(r"确认执行\s+([a-f0-9]{8})", user_message, flags=re.IGNORECASE):
+            if token in pending:
+                confirmed.add(token)
+
+    def _check_tool_confirmation(
+        self,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        session_id: str,
+    ) -> Optional[str]:
+        if tool_name not in self.DANGEROUS_TOOLS:
+            return None
+
+        token = str(tool_input.get("confirmation_token", "")).strip()
+        fingerprint = self._confirmation_fingerprint(tool_name, tool_input)
+        pending = self._pending_confirmations.setdefault(session_id, {})
+
+        if token:
+            item = pending.get(token)
+            confirmed_tokens = self._confirmed_tokens.get(session_id, set())
+            if (
+                item
+                and item.get("tool_name") == tool_name
+                and item.get("fingerprint") == fingerprint
+                and token in confirmed_tokens
+            ):
+                pending.pop(token, None)
+                confirmed_tokens.discard(token)
+                return None
+
+        new_token = uuid.uuid4().hex[:8]
+        pending[new_token] = {
+            "tool_name": tool_name,
+            "fingerprint": fingerprint,
+        }
+        payload = build_confirmation_required(
+            action=tool_name,
+            target=self._confirmation_target(tool_name, tool_input),
+            message=self._confirmation_message(tool_name, tool_input),
+            confirmation_token=new_token,
+            details=self._confirmation_details(tool_name, tool_input),
+        )
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _confirmation_fingerprint(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
+        clean_input = {
+            key: value
+            for key, value in tool_input.items()
+            if key != "confirmation_token"
+        }
+        return json.dumps(
+            {"tool": tool_name, "input": clean_input},
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+
+    def _confirmation_target(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
+        if "container_id" in tool_input:
+            return str(tool_input["container_id"])
+        if "image_id" in tool_input:
+            return str(tool_input["image_id"])
+        if "network_id" in tool_input:
+            return str(tool_input["network_id"])
+        if "project_name" in tool_input:
+            return str(tool_input["project_name"])
+        if "name" in tool_input:
+            return str(tool_input["name"])
+        if "image" in tool_input:
+            return str(tool_input["image"])
+        return tool_name
+
+    def _confirmation_message(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
+        target = self._confirmation_target(tool_name, tool_input)
+        if tool_name == "deploy_with_compose":
+            project_name = re.sub(r"[^a-z0-9_-]", "-", str(tool_input["project_name"]).lower())
+            base_dir = os.environ.get("PROJECTS_BASE_DIR", "/opt/docker-projects")
+            work_dir = os.path.join(base_dir, project_name)
+            preflight = analyze_compose(
+                str(tool_input.get("compose_content", "")),
+                env_vars=tool_input.get("env_vars") or {},
+                work_dir=work_dir,
+            )
+            preflight_text = self._format_preflight(preflight)
+            if preflight_text:
+                return f"写入 compose/env 并执行 Docker Compose 部署 {target}\n\n部署前预检：\n{preflight_text}"
+
+        names = {
+            "start_container": "启动容器",
+            "stop_container": "停止容器",
+            "restart_container": "重启容器",
+            "remove_container": "删除容器",
+            "run_container": "运行新容器",
+            "remove_image": "删除镜像",
+            "remove_network": "删除网络",
+            "deploy_with_compose": "写入 compose/env 并执行 Docker Compose 部署",
+        }
+        return f"{names.get(tool_name, tool_name)} {target}"
+
+    def _confirmation_details(self, tool_name: str, tool_input: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if tool_name != "deploy_with_compose":
+            return None
+
+        project_name = re.sub(r"[^a-z0-9_-]", "-", str(tool_input["project_name"]).lower())
+        base_dir = os.environ.get("PROJECTS_BASE_DIR", "/opt/docker-projects")
+        work_dir = os.path.join(base_dir, project_name)
+        env_vars = tool_input.get("env_vars") or {}
+        preflight = analyze_compose(
+            str(tool_input.get("compose_content", "")),
+            env_vars=env_vars,
+            work_dir=work_dir,
+        )
+        files = [os.path.join(work_dir, "docker-compose.yml")]
+        if env_vars:
+            files.append(os.path.join(work_dir, ".env"))
+        return {
+            "kind": "compose_deploy",
+            "compose_project": project_name,
+            "work_dir": work_dir,
+            "files": files,
+            "env_keys": sorted(env_vars.keys()),
+            "access_urls": preflight.get("access_urls") or [],
+            "warnings": preflight.get("warnings") or [],
+        }
+
+    def _format_preflight(self, preflight: Dict[str, Any]) -> str:
+        lines = []
+        warnings = preflight.get("warnings") or []
+        for warning in warnings:
+            level = warning.get("level", "warning")
+            prefix = "高风险" if level == "danger" else "注意"
+            lines.append(f"- [{prefix}] {warning.get('message', '')}")
+
+        access_urls = preflight.get("access_urls") or []
+        if access_urls:
+            lines.append("预计访问地址：")
+            for item in access_urls:
+                service = item.get("service", "web")
+                url = item.get("url", "")
+                if url:
+                    lines.append(f"- {service}: {url}")
+        return "\n".join(line for line in lines if line.strip())
+
+    async def _get_occupied_host_ports(self) -> Set[int]:
+        ports: Set[int] = set()
+        try:
+            containers = await docker_manager.list_containers(all=True)
+        except Exception:
+            return ports
+
+        for container in containers:
+            bindings = container.get("ports") or {}
+            if not isinstance(bindings, dict):
+                continue
+            for value in bindings.values():
+                if not isinstance(value, list):
+                    continue
+                for item in value:
+                    if not isinstance(item, dict):
+                        continue
+                    host_port = item.get("HostPort")
+                    try:
+                        if host_port:
+                            ports.add(int(host_port))
+                    except ValueError:
+                        continue
+        return ports
+
+    def _parse_json_object(self, value: str) -> Dict[str, Any]:
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
 
     async def _enrich_with_dependency_hints(
         self,

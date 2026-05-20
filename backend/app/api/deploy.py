@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.core.webfetch import web_fetcher
+from app.core.compose_preflight import analyze_compose
 from app.core.agent_engine import agent_engine
 from app.core.rollback_manager import rollback_manager
 from app.models.schemas import DeployRequest, DeployResult
@@ -19,6 +20,14 @@ async def analyze_source(req: DeployRequest, db: AsyncSession = Depends(get_db))
     """
     try:
         result = await web_fetcher.resolve_source(req.source)
+        compose_content = result.get("compose_content")
+        if isinstance(compose_content, str) and compose_content.strip():
+            result["preflight"] = analyze_compose(compose_content)
+        page_info = result.get("page_info")
+        if isinstance(page_info, dict) and page_info.get("compose_blocks"):
+            blocks = page_info.get("compose_blocks")
+            if isinstance(blocks, list) and blocks:
+                result["preflight"] = analyze_compose(str(blocks[0]))
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"解析失败：{str(e)}")

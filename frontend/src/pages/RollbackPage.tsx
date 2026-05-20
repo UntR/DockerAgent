@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { RotateCcw, Plus, Trash2, Clock, Box, ShieldCheck, AlertTriangle } from 'lucide-react'
-import { rollbackApi } from '../lib/api'
+import { rollbackApi, runWithConfirmation } from '../lib/api'
 import { useDockerStore } from '../lib/store'
 import { cn, formatDate } from '../lib/utils'
 import toast from 'react-hot-toast'
@@ -13,9 +14,12 @@ interface Snapshot {
   created_at: string
   is_auto: boolean
   container_count: number
+  compose_project?: string
 }
 
 export default function RollbackPage() {
+  const [searchParams] = useSearchParams()
+  const composeProject = searchParams.get('compose_project') ?? ''
   const { snapshots, setSnapshots } = useDockerStore()
   const [loading, setLoading] = useState(false)
   const [createForm, setCreateForm] = useState({ show: false, name: '', desc: '', submitting: false })
@@ -26,7 +30,7 @@ export default function RollbackPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const data = await rollbackApi.listSnapshots() as Snapshot[]
+      const data = await rollbackApi.listSnapshots(composeProject || undefined) as Snapshot[]
       setSnapshots(data)
     } catch (e: unknown) {
       toast.error('加载快照失败')
@@ -35,13 +39,13 @@ export default function RollbackPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [composeProject])
 
   const createSnapshot = async () => {
     if (!createForm.name.trim()) return
     setCreateForm((f) => ({ ...f, submitting: true }))
     try {
-      await rollbackApi.createSnapshot(createForm.name, createForm.desc || undefined)
+      await rollbackApi.createSnapshot(createForm.name, createForm.desc || undefined, composeProject || undefined)
       toast.success('快照创建成功')
       setCreateForm({ show: false, name: '', desc: '', submitting: false })
       await load()
@@ -66,7 +70,10 @@ export default function RollbackPage() {
     if (!rollbackModal.snap) return
     setRollbackModal((s) => ({ ...s, running: true }))
     try {
-      const result = await rollbackApi.rollback(rollbackModal.snap.id, rollbackModal.keepVolumes) as { message: string; errors: string[] }
+      const result = await runWithConfirmation(
+        () => rollbackApi.rollback(rollbackModal.snap!.id, rollbackModal.keepVolumes),
+        (confirmation) => rollbackApi.rollback(rollbackModal.snap!.id, rollbackModal.keepVolumes, confirmation),
+      ) as { message: string; errors: string[] }
       toast.success(result.message)
       setRollbackModal({ snap: null, keepVolumes: true, running: false })
     } catch (e: unknown) {
@@ -81,7 +88,7 @@ export default function RollbackPage() {
         <div>
           <h1 className="font-display text-2xl font-semibold text-white">回滚管理</h1>
           <p className="text-gray-500 text-sm mt-1">
-            每次部署前自动快照，出现问题一键恢复
+            {composeProject ? `仅显示应用 ${composeProject} 的相关快照` : '每次部署前自动快照，出现问题一键恢复'}
           </p>
         </div>
         <div className="flex gap-3">
@@ -149,6 +156,9 @@ export default function RollbackPage() {
                   {snap.container_count} 个容器
                 </span>
                 <span className="text-xs text-gray-600">{formatDate(snap.created_at)}</span>
+                {snap.compose_project && (
+                  <span className="text-xs text-cyan-500 font-mono">{snap.compose_project}</span>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2">

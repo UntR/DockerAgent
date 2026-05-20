@@ -4,7 +4,7 @@ import { Plus, Trash2, RefreshCw, HardDrive } from 'lucide-react'
 import { useDockerStore } from '../lib/store'
 import { useDocker } from '../hooks/useDocker'
 import { cn, formatDate } from '../lib/utils'
-import { dockerApi } from '../lib/api'
+import { dockerApi, runWithConfirmation } from '../lib/api'
 import toast from 'react-hot-toast'
 
 export default function VolumesPage() {
@@ -29,7 +29,10 @@ export default function VolumesPage() {
   const removeVolume = async (name: string) => {
     if (!confirm(`确认删除数据卷 "${name}"？\n⚠️ 此操作不可恢复，卷内数据将永久丢失`)) return
     try {
-      await dockerApi.removeVolume(name)
+      await runWithConfirmation(
+        () => dockerApi.removeVolume(name),
+        (confirmation) => dockerApi.removeVolume(name, confirmation),
+      )
       toast.success(`数据卷 ${name} 已删除`)
       await refresh()
     } catch (e: unknown) {

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Play, Square, RotateCcw, Trash2, FileText, RefreshCw, Search } from 'lucide-react'
 import { useDockerStore } from '../lib/store'
@@ -10,7 +11,8 @@ import toast from 'react-hot-toast'
 export default function ContainersPage() {
   const { containers, loading } = useDockerStore()
   const { refresh, containerAction } = useDocker()
-  const [search, setSearch] = useState('')
+  const [searchParams] = useSearchParams()
+  const [search, setSearch] = useState(searchParams.get('q') ?? '')
   const [logs, setLogs] = useState<{ name: string; content: string } | null>(null)
   const [showAll, setShowAll] = useState(true)
 

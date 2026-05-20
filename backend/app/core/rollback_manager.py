@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import Snapshot
 from app.core.docker_manager import docker_manager
+from app.core.snapshot_utils import snapshot_to_dict
 
 
 class RollbackManager:
@@ -19,6 +20,7 @@ class RollbackManager:
         name: str,
         description: Optional[str] = None,
         is_auto: bool = True,
+        compose_project: Optional[str] = None,
     ) -> Snapshot:
         """快照当前所有容器、网络、卷的配置。"""
         containers = await docker_manager.list_containers(all=True)
@@ -41,28 +43,24 @@ class RollbackManager:
             networks=networks,
             volumes=volumes,
             is_auto=is_auto,
+            compose_project=compose_project,
         )
         db.add(snapshot)
         await db.commit()
         await db.refresh(snapshot)
         return snapshot
 
-    async def list_snapshots(self, db: AsyncSession) -> List[Dict[str, Any]]:
-        result = await db.execute(
-            select(Snapshot).order_by(Snapshot.created_at.desc())
-        )
+    async def list_snapshots(
+        self,
+        db: AsyncSession,
+        compose_project: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        query = select(Snapshot)
+        if compose_project:
+            query = query.where(Snapshot.compose_project == compose_project)
+        result = await db.execute(query.order_by(Snapshot.created_at.desc()))
         rows = result.scalars().all()
-        return [
-            {
-                "id": r.id,
-                "name": r.name,
-                "description": r.description,
-                "created_at": r.created_at.isoformat() if r.created_at else "",
-                "is_auto": r.is_auto,
-                "container_count": len(r.containers) if r.containers else 0,
-            }
-            for r in rows
-        ]
+        return [snapshot_to_dict(r) for r in rows]
 
     async def get_snapshot(self, db: AsyncSession, snapshot_id: int) -> Optional[Snapshot]:
         result = await db.execute(select(Snapshot).where(Snapshot.id == snapshot_id))

@@ -19,6 +19,7 @@ class RunContainerRequest(BaseModel):
     command: Optional[str] = None
     restart_policy: Optional[str] = "unless-stopped"
     detach: bool = True
+    confirmation: Optional[str] = None
 
 
 class PullImageRequest(BaseModel):
@@ -73,11 +74,13 @@ class DeployResult(BaseModel):
 class SnapshotCreate(BaseModel):
     name: str
     description: Optional[str] = None
+    compose_project: Optional[str] = None
 
 
 class RollbackRequest(BaseModel):
     snapshot_id: int
     keep_volumes: bool = True
+    confirmation: Optional[str] = None
 
 
 class SnapshotInfo(BaseModel):
@@ -87,6 +90,7 @@ class SnapshotInfo(BaseModel):
     created_at: datetime
     is_auto: bool
     container_count: int
+    compose_project: Optional[str] = None
 
     class Config:
         from_attributes = True

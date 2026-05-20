@@ -4,7 +4,7 @@ import { Plus, Trash2, RefreshCw } from 'lucide-react'
 import { useDockerStore } from '../lib/store'
 import { useDocker } from '../hooks/useDocker'
 import { cn, formatDate } from '../lib/utils'
-import { dockerApi } from '../lib/api'
+import { dockerApi, runWithConfirmation } from '../lib/api'
 import toast from 'react-hot-toast'
 
 export default function NetworksPage() {
@@ -33,7 +33,10 @@ export default function NetworksPage() {
     }
     if (!confirm(`确认删除网络 "${name}"？`)) return
     try {
-      await dockerApi.removeNetwork(id)
+      await runWithConfirmation(
+        () => dockerApi.removeNetwork(id),
+        (confirmation) => dockerApi.removeNetwork(id, confirmation),
+      )
       toast.success(`网络 ${name} 已删除`)
       await refresh()
     } catch (e: unknown) {

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Send, Bot, User, Sparkles, RotateCcw, Brain, Zap,
   ChevronDown, Wrench, CheckCircle2, XCircle, Loader2,
   Terminal, Plus, MessageSquare, Trash2, CornerDownLeft,
+  FolderOpen, ExternalLink,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -11,6 +13,7 @@ import { useAgentStore, ToolCall, SessionMeta } from '../lib/store'
 import { useAgent } from '../hooks/useAgent'
 import { cn } from '../lib/utils'
 import { agentApi } from '../lib/api'
+import { parseDeployResult } from '../lib/deployResult'
 import toast from 'react-hot-toast'
 
 const QUICK_PROMPTS = [
@@ -48,16 +51,44 @@ const TOOL_COLORS: Record<string, string> = {
 export default function ChatPage() {
   const {
     messages, sessionId, isConnected, isTyping, clearMessages,
-    loadingHistory, sessions, removeSessionFromList,
+    loadingHistory, sessions, removeSessionFromList, setSessionId, addSession,
   } = useAgentStore()
   const { initSession, sendMessage, switchSession, createNewSession } = useAgent()
+  const location = useLocation()
   const [input, setInput] = useState('')
+  const [pendingInitMessage, setPendingInitMessage] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const deployInitHandledRef = useRef(false)
   const [memories, setMemories] = useState<unknown[]>([])
   const [showMemories, setShowMemories] = useState(false)
 
-  useEffect(() => { initSession() }, [initSession])
+  const routeState = location.state as { sessionId?: string; initMessage?: string } | null
+
+  useEffect(() => {
+    if (!routeState?.sessionId || deployInitHandledRef.current) return
+
+    deployInitHandledRef.current = true
+    setSessionId(routeState.sessionId)
+    setPendingInitMessage(routeState.initMessage ?? null)
+    const now = Date.now()
+    addSession({
+      id: routeState.sessionId,
+      name: (routeState.initMessage ?? '智能部署').slice(0, 20),
+      created: now,
+      preview: routeState.initMessage ?? '',
+    })
+  }, [routeState?.sessionId, routeState?.initMessage, setSessionId, addSession])
+
+  useEffect(() => {
+    if (!routeState?.sessionId) initSession()
+  }, [initSession, routeState?.sessionId])
+
+  useEffect(() => {
+    if (!pendingInitMessage || !isConnected || isTyping) return
+    sendMessage(pendingInitMessage)
+    setPendingInitMessage(null)
+  }, [pendingInitMessage, isConnected, isTyping, sendMessage])
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isTyping])
@@ -223,7 +254,11 @@ export default function ChatPage() {
                     {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
                       <div className="space-y-1.5">
                         {msg.toolCalls.map((tc) => (
-                          <ToolCallCard key={tc.id} tc={tc} />
+                          <ToolCallCard
+                            key={tc.id}
+                            tc={tc}
+                            onSend={!isTyping ? handleSend : undefined}
+                          />
                         ))}
                       </div>
                     )}
@@ -401,10 +436,48 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
   )
 }
 
+interface ToolConfirmation {
+  message: string
+  user_prompt: string
+  details?: {
+    kind?: string
+    compose_project?: string
+    work_dir?: string
+    files?: string[]
+    env_keys?: string[]
+    access_urls?: Array<{ service: string; url: string }>
+    warnings?: Array<{ level?: string; message?: string }>
+  }
+}
+
+function parseToolConfirmation(result?: string): ToolConfirmation | null {
+  if (!result) return null
+  try {
+    const parsed = JSON.parse(result) as {
+      requires_confirmation?: boolean
+      confirmation?: {
+        message?: string
+        user_prompt?: string
+        details?: ToolConfirmation['details']
+      }
+    }
+    if (!parsed.requires_confirmation || !parsed.confirmation?.user_prompt) return null
+    return {
+      message: parsed.confirmation.message ?? '该操作需要确认',
+      user_prompt: parsed.confirmation.user_prompt,
+      details: parsed.confirmation.details,
+    }
+  } catch {
+    return null
+  }
+}
+
 // ── Tool Call 卡片 ──────────────────────────────────────────────
-function ToolCallCard({ tc }: { tc: ToolCall }) {
+function ToolCallCard({ tc, onSend }: { tc: ToolCall; onSend?: (text: string) => void }) {
   const [showDetails, setShowDetails] = useState(false)
   const color = TOOL_COLORS[tc.name] || 'text-gray-400'
+  const confirmation = parseToolConfirmation(tc.result)
+  const deployResult = parseDeployResult(tc.name, tc.result)
 
   return (
     <motion.div
@@ -429,6 +502,62 @@ function ToolCallCard({ tc }: { tc: ToolCall }) {
         {tc.status === 'error' && <XCircle size={11} className="text-red-400 ml-1 flex-shrink-0" />}
         <ChevronDown size={10} className={cn('text-gray-600 ml-1 transition-transform flex-shrink-0', showDetails && 'rotate-180')} />
       </button>
+      {confirmation && (
+        <div className="border-t border-yellow-500/15 bg-yellow-500/5 px-3 py-3 space-y-2">
+          <div className="text-xs text-yellow-200 leading-relaxed whitespace-pre-wrap">
+            {confirmation.message}
+          </div>
+          {confirmation.details?.kind === 'compose_deploy' && (
+            <DeployConfirmationDetails details={confirmation.details} />
+          )}
+          <button
+            onClick={() => onSend?.(confirmation.user_prompt)}
+            disabled={!onSend}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/15 border border-yellow-500/25 text-yellow-200 hover:bg-yellow-500/25 disabled:opacity-50 text-xs font-medium transition-colors"
+          >
+            <Send size={11} />
+            确认执行
+          </button>
+        </div>
+      )}
+      {deployResult && (
+        <div className="border-t border-emerald-500/15 bg-emerald-500/5 px-3 py-3 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-300">
+                <CheckCircle2 size={12} />
+                部署已启动
+              </div>
+              <div className="mt-1 text-[11px] text-gray-500 font-mono truncate">
+                {deployResult.projectName}
+              </div>
+            </div>
+            <Link
+              to={deployResult.appPath}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 hover:bg-emerald-500/20 text-xs font-medium transition-colors flex-shrink-0"
+            >
+              <FolderOpen size={12} />
+              查看应用详情
+            </Link>
+          </div>
+          {deployResult.accessUrls.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {deployResult.accessUrls.map((item, index) => (
+                <a
+                  key={`${item.service}-${index}`}
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 text-[11px] font-mono transition-colors"
+                >
+                  <ExternalLink size={10} />
+                  {item.service}: {item.url}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <AnimatePresence>
         {showDetails && (
           <motion.div
@@ -468,6 +597,83 @@ function ToolCallCard({ tc }: { tc: ToolCall }) {
         )}
       </AnimatePresence>
     </motion.div>
+  )
+}
+
+function DeployConfirmationDetails({ details }: { details: NonNullable<ToolConfirmation['details']> }) {
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-black/20 p-3 space-y-3">
+      <div className="grid gap-2 text-[11px]">
+        {details.compose_project && (
+          <div className="flex gap-2 min-w-0">
+            <span className="w-16 flex-shrink-0 text-gray-500">项目</span>
+            <span className="text-gray-300 font-mono truncate">{details.compose_project}</span>
+          </div>
+        )}
+        {details.work_dir && (
+          <div className="flex gap-2 min-w-0">
+            <span className="w-16 flex-shrink-0 text-gray-500">目录</span>
+            <span className="text-gray-300 font-mono truncate">{details.work_dir}</span>
+          </div>
+        )}
+      </div>
+      {!!details.files?.length && (
+        <div>
+          <div className="mb-1 text-[10px] text-gray-500 uppercase tracking-wider">将写入文件</div>
+          <div className="space-y-1">
+            {details.files.map((file) => (
+              <div key={file} className="text-[11px] text-gray-300 font-mono truncate bg-white/[0.04] rounded px-2 py-1">
+                {file}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {!!details.env_keys?.length && (
+        <div>
+          <div className="mb-1 text-[10px] text-gray-500 uppercase tracking-wider">Env 键</div>
+          <div className="flex flex-wrap gap-1">
+            {details.env_keys.map((key) => (
+              <span key={key} className="text-[10px] text-amber-200 bg-amber-500/10 border border-amber-500/15 rounded px-1.5 py-0.5 font-mono">
+                {key}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {!!details.access_urls?.length && (
+        <div>
+          <div className="mb-1 text-[10px] text-gray-500 uppercase tracking-wider">预计访问地址</div>
+          <div className="flex flex-wrap gap-1">
+            {details.access_urls.map((item, index) => (
+              <span key={`${item.service}-${index}`} className="text-[10px] text-cyan-300 bg-cyan-500/10 border border-cyan-500/15 rounded px-1.5 py-0.5 font-mono">
+                {item.service}: {item.url}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {!!details.warnings?.length && (
+        <div>
+          <div className="mb-1 text-[10px] text-gray-500 uppercase tracking-wider">风险项</div>
+          <div className="space-y-1">
+            {details.warnings.map((warning, index) => (
+              <div
+                key={index}
+                className={cn(
+                  'text-[11px] rounded px-2 py-1 border',
+                  warning.level === 'danger'
+                    ? 'text-red-200 bg-red-500/10 border-red-500/20'
+                    : 'text-yellow-200 bg-yellow-500/10 border-yellow-500/20',
+                )}
+              >
+                {warning.message}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

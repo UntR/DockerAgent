@@ -1,7 +1,7 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, Boolean, Float
+from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, Boolean, Float, text
 from datetime import datetime, timezone
 
 DB_PATH = os.environ.get("DB_PATH", "/data/docker_agent.db")
@@ -61,6 +61,24 @@ class Snapshot(Base):
     volumes = Column(JSON, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_auto = Column(Boolean, default=True)
+    compose_project = Column(String(256), nullable=True, index=True)
+
+
+class ManagedApp(Base):
+    """由 DockerAgent 部署或登记的 Compose 应用。"""
+    __tablename__ = "managed_apps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(256), nullable=False)
+    compose_project = Column(String(256), unique=True, index=True, nullable=False)
+    work_dir = Column(Text, nullable=False)
+    compose_path = Column(Text, nullable=False)
+    env_path = Column(Text, nullable=True)
+    source_url = Column(Text, nullable=True)
+    access_urls = Column(JSON, nullable=True)
+    status = Column(String(32), default="running")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class LLMProvider(Base):
@@ -88,3 +106,8 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        columns = await conn.execute(text("PRAGMA table_info(snapshots)"))
+        column_names = {row[1] for row in columns.fetchall()}
+        if "compose_project" not in column_names:
+            await conn.execute(text("ALTER TABLE snapshots ADD COLUMN compose_project VARCHAR(256)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_snapshots_compose_project ON snapshots (compose_project)"))

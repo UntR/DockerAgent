@@ -16,7 +16,8 @@ services:
     container_name: docker-agent
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:8088"
+      # 默认只绑定本机，避免意外公网暴露 Docker socket 控制面
+      - "127.0.0.1:${PORT:-3000}:8088"
     environment:
       - LLM_PROVIDER=${LLM_PROVIDER:-anthropic}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -26,9 +27,9 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - DB_PATH=/data/docker_agent.db
-      # 访问令牌（设置后，所有 API 请求均需携带；留空则跳过鉴权）
+      # 访问令牌（设置后，所有 API 请求均需携带；留空则仅允许本机 Host 访问）
       - ACCESS_TOKEN=${ACCESS_TOKEN:-}
-      # 允许的跨域来源，逗号分隔（留空默认 *，仅限内网）
+      # 允许的跨域来源，逗号分隔（留空默认 *，仅建议本机模式）
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       # Compose 部署超时：0 = 不限时（适合大型 LLM 镜像）
       - COMPOSE_PULL_TIMEOUT=${COMPOSE_PULL_TIMEOUT:-0}

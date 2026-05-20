@@ -271,6 +271,14 @@ DOCKER_TOOLS: List[Dict[str, Any]] = [
                     "type": "object",
                     "description": "环境变量键值对，如 {\"API_KEY\": \"sk-xxx\", \"PORT\": \"8080\"}",
                 },
+                "display_name": {
+                    "type": "string",
+                    "description": "应用显示名称，可选；默认使用项目名称",
+                },
+                "source_url": {
+                    "type": "string",
+                    "description": "应用来源 URL，可选，如 GitHub 仓库地址",
+                },
             },
             "required": ["project_name", "compose_content"],
         },
@@ -293,3 +301,24 @@ DOCKER_TOOLS: List[Dict[str, Any]] = [
         },
     },
 ]
+
+_DANGEROUS_TOOL_NAMES = {
+    "start_container",
+    "stop_container",
+    "restart_container",
+    "remove_container",
+    "run_container",
+    "remove_image",
+    "remove_network",
+    "deploy_with_compose",
+}
+
+for _tool in DOCKER_TOOLS:
+    if _tool["name"] in _DANGEROUS_TOOL_NAMES:
+        _tool["input_schema"].setdefault("properties", {})["confirmation_token"] = {
+            "type": "string",
+            "description": (
+                "危险操作确认 token。仅当用户明确回复“确认执行 <token>”后，"
+                "将该 token 原样填入；否则不要填写。"
+            ),
+        }

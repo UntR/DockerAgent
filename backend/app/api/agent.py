@@ -1,9 +1,11 @@
 import json
+import os
 import uuid
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
+from app.core.access_control import LOCAL_ONLY_DETAIL, should_allow_without_access_token
 from app.core.agent_engine import agent_engine
 from app.core.memory import memory_manager
 from app.models.schemas import AgentChatRequest
@@ -15,8 +17,17 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 async def chat_websocket(websocket: WebSocket, session_id: str):
     """WebSocket 流式对话接口。
     
-    鉴权由 main.py 中间件统一处理（从 ?token= 查询参数校验 ACCESS_TOKEN）。
+    ACCESS_TOKEN 为空时仅允许本机 Host；设置后从 ?token= 查询参数校验。
     """
+    access_token = os.environ.get("ACCESS_TOKEN", "").strip()
+    if access_token:
+        if websocket.query_params.get("token", "") != access_token:
+            await websocket.close(code=1008, reason="未授权：WebSocket 握手缺少有效的 token 参数")
+            return
+    elif not should_allow_without_access_token(websocket.headers.get("host", "")):
+        await websocket.close(code=1008, reason=LOCAL_ONLY_DETAIL)
+        return
+
     await websocket.accept()
     from app.db.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:

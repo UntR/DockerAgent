@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import toast from 'react-hot-toast'
-import { dockerApi } from '../lib/api'
+import { dockerApi, runWithConfirmation } from '../lib/api'
 import { useDockerStore } from '../lib/store'
 
 export function useDocker() {
@@ -44,10 +44,27 @@ export function useDocker() {
         start: '启动', stop: '停止', restart: '重启', remove: '删除',
       }
       try {
-        if (action === 'start') await dockerApi.startContainer(id)
-        else if (action === 'stop') await dockerApi.stopContainer(id)
-        else if (action === 'restart') await dockerApi.restartContainer(id)
-        else if (action === 'remove') await dockerApi.removeContainer(id, true)
+        if (action === 'start') {
+          await runWithConfirmation(
+            () => dockerApi.startContainer(id),
+            (confirmation) => dockerApi.startContainer(id, confirmation),
+          )
+        } else if (action === 'stop') {
+          await runWithConfirmation(
+            () => dockerApi.stopContainer(id),
+            (confirmation) => dockerApi.stopContainer(id, confirmation),
+          )
+        } else if (action === 'restart') {
+          await runWithConfirmation(
+            () => dockerApi.restartContainer(id),
+            (confirmation) => dockerApi.restartContainer(id, confirmation),
+          )
+        } else if (action === 'remove') {
+          await runWithConfirmation(
+            () => dockerApi.removeContainer(id, true),
+            (confirmation) => dockerApi.removeContainer(id, true, confirmation),
+          )
+        }
         toast.success(`${name} 已${labels[action]}`)
         await refresh()
       } catch (e: unknown) {

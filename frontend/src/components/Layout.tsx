@@ -2,7 +2,7 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import { useEffect } from 'react'
 import {
   LayoutDashboard, Box, Image, Network, Database,
-  MessageSquare, Rocket, RotateCcw, Zap, Settings,
+  MessageSquare, Rocket, RotateCcw, Zap, Settings, FolderOpen,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useDocker } from '../hooks/useDocker'
@@ -16,6 +16,7 @@ const navItems = [
   { to: '/volumes', icon: Database, label: '数据卷' },
   { to: '/chat', icon: MessageSquare, label: 'AI 助手', accent: true },
   { to: '/deploy', icon: Rocket, label: '智能部署' },
+  { to: '/apps', icon: FolderOpen, label: '应用' },
   { to: '/rollback', icon: RotateCcw, label: '回滚' },
   { to: '/settings', icon: Settings, label: '设置' },
 ]

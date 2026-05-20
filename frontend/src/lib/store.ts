@@ -59,6 +59,7 @@ export interface Snapshot {
   created_at: string
   is_auto: boolean
   container_count: number
+  compose_project?: string
 }
 
 export interface ToolCall {

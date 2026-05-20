@@ -4,7 +4,7 @@ import { Trash2, Download, RefreshCw, Search } from 'lucide-react'
 import { useDockerStore } from '../lib/store'
 import { useDocker } from '../hooks/useDocker'
 import { cn, formatBytes, formatDate } from '../lib/utils'
-import { dockerApi } from '../lib/api'
+import { dockerApi, runWithConfirmation } from '../lib/api'
 import toast from 'react-hot-toast'
 
 export default function ImagesPage() {
@@ -36,7 +36,10 @@ export default function ImagesPage() {
   const removeImage = async (id: string, tag: string) => {
     if (!confirm(`确认删除镜像 "${tag}"？`)) return
     try {
-      await dockerApi.removeImage(id, true)
+      await runWithConfirmation(
+        () => dockerApi.removeImage(id, true),
+        (confirmation) => dockerApi.removeImage(id, true, confirmation),
+      )
       toast.success('镜像已删除')
       await refresh()
     } catch (e: unknown) {

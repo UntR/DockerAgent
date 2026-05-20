@@ -7,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.db.database import init_db
-from app.api import docker, agent, deploy, rollback, settings
+from app.api import docker, agent, deploy, rollback, settings, apps
+from app.core.access_control import LOCAL_ONLY_DETAIL, should_allow_without_access_token
 
 
 @asynccontextmanager
@@ -63,7 +64,7 @@ app.add_middleware(
 # ── API 鉴权中间件 ──────────────────────────────────────────────────────────────
 # ACCESS_TOKEN: 设置后，所有 /api/* 请求均需携带该 Token
 # HTTP：Authorization: Bearer <token>  或  X-API-Key: <token>
-# WebSocket 握手：?token=<token> 查询参数（在中间件层统一校验）
+# WebSocket 握手在 agent.py 中校验：?token=<token> 查询参数
 # 留空则跳过鉴权（向后兼容，仅推荐纯内网环境）
 _ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "").strip()
 
@@ -73,6 +74,11 @@ _AUTH_SKIP_PATHS = {"/api/health"}
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     if not _ACCESS_TOKEN:
+        if not should_allow_without_access_token(request.headers.get("host", "")):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": LOCAL_ONLY_DETAIL},
+            )
         return await call_next(request)
 
     path = request.url.path
@@ -118,6 +124,7 @@ app.include_router(agent.router, prefix="/api")
 app.include_router(deploy.router, prefix="/api")
 app.include_router(rollback.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(apps.router, prefix="/api")
 
 @app.get("/api/health")
 async def health():

@@ -2,8 +2,6 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Rocket, Github, Globe, Package, Sparkles, ArrowRight, Loader } from 'lucide-react'
 import { deployApi } from '../lib/api'
-import { useAgentStore } from '../lib/store'
-import { useAgent } from '../hooks/useAgent'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
@@ -20,8 +18,6 @@ export default function DeployPage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState<Record<string, unknown> | null>(null)
   const navigate = useNavigate()
-  const { setSessionId } = useAgentStore()
-  const { connect } = useAgent()
 
   const analyze = async () => {
     if (!source.trim()) return
@@ -44,10 +40,13 @@ export default function DeployPage() {
         session_id: string
         init_message: string
       }
-      setSessionId(result.session_id)
-      connect(result.session_id)
       toast.success('部署任务已创建，跳转到 AI 助手...')
-      navigate('/chat')
+      navigate('/chat', {
+        state: {
+          sessionId: result.session_id,
+          initMessage: result.init_message,
+        },
+      })
     } catch (e: unknown) {
       toast.error(`部署失败: ${e instanceof Error ? e.message : String(e)}`)
     }
@@ -169,6 +168,12 @@ export default function DeployPage() {
 
 function AnalysisDisplay({ data }: { data: Record<string, unknown> }) {
   const d = data
+  const preflight = d.preflight as
+    | {
+        warnings?: Array<{ code: string; level: string; message: string }>
+        access_urls?: Array<{ service: string; url: string }>
+      }
+    | undefined
 
   return (
     <div className="space-y-3 text-sm">
@@ -184,6 +189,38 @@ function AnalysisDisplay({ data }: { data: Record<string, unknown> }) {
             {String(d.compose_content).slice(0, 1000)}
             {String(d.compose_content).length > 1000 ? '\n...(已截断)' : ''}
           </pre>
+        </div>
+      )}
+
+      {preflight && (
+        <div className="space-y-2">
+          {Array.isArray(preflight.warnings) && preflight.warnings.length > 0 && (
+            <div>
+              <div className="text-gray-500 mb-1">部署前预检：</div>
+              <div className="space-y-1">
+                {preflight.warnings.map((warning, i) => (
+                  <div
+                    key={`${warning.code}-${i}`}
+                    className={warning.level === 'danger' ? 'text-red-300' : 'text-yellow-300'}
+                  >
+                    {warning.message}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {Array.isArray(preflight.access_urls) && preflight.access_urls.length > 0 && (
+            <div>
+              <div className="text-gray-500 mb-1">预计访问地址：</div>
+              <div className="space-y-1">
+                {preflight.access_urls.map((item, i) => (
+                  <div key={`${item.service}-${i}`} className="text-cyan-400 font-mono">
+                    {item.service}: {item.url}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

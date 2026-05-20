@@ -10,6 +10,8 @@ import ChatPage from './pages/ChatPage'
 import DeployPage from './pages/DeployPage'
 import RollbackPage from './pages/RollbackPage'
 import SettingsPage from './pages/SettingsPage'
+import AppsPage from './pages/AppsPage'
+import AppDetailPage from './pages/AppDetailPage'
 
 export default function App() {
   return (
@@ -37,6 +39,8 @@ export default function App() {
           <Route path="volumes" element={<VolumesPage />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="deploy" element={<DeployPage />} />
+          <Route path="apps" element={<AppsPage />} />
+          <Route path="apps/:id" element={<AppDetailPage />} />
           <Route path="rollback" element={<RollbackPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>

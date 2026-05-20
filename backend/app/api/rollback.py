@@ -1,19 +1,31 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import Optional
 
 from app.db.database import get_db
 from app.core.rollback_manager import rollback_manager
+from app.core.confirmation import build_confirmation_required, is_confirmed
 from app.models.schemas import SnapshotCreate, RollbackRequest
 
 router = APIRouter(prefix="/rollback", tags=["rollback"])
 
 
+def _confirmation_response(action: str, target: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=build_confirmation_required(action, target, message),
+    )
+
+
 @router.get("/snapshots")
-async def list_snapshots(db: AsyncSession = Depends(get_db)):
+async def list_snapshots(
+    compose_project: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
     """列出所有快照。"""
     try:
-        return await rollback_manager.list_snapshots(db)
+        return await rollback_manager.list_snapshots(db, compose_project=compose_project)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -27,6 +39,7 @@ async def create_snapshot(req: SnapshotCreate, db: AsyncSession = Depends(get_db
             name=req.name,
             description=req.description,
             is_auto=False,
+            compose_project=req.compose_project,
         )
         return {
             "id": snap.id,
@@ -56,6 +69,12 @@ async def delete_snapshot(snapshot_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/execute")
 async def execute_rollback(req: RollbackRequest, db: AsyncSession = Depends(get_db)):
     """执行回滚。"""
+    if not is_confirmed(req.confirmation):
+        return _confirmation_response(
+            "execute_rollback",
+            str(req.snapshot_id),
+            f"回滚到快照 {req.snapshot_id}",
+        )
     try:
         result = await rollback_manager.rollback_to(
             db,

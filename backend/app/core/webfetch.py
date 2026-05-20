@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from bs4 import BeautifulSoup
+from app.core.compose_preflight import analyze_compose
 
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
@@ -164,6 +165,7 @@ class WebFetcher:
         if isinstance(compose_content, str):
             result["compose_content"] = compose_content
             result["has_compose"] = True
+            result["preflight"] = analyze_compose(compose_content)
         else:
             result["has_compose"] = False
 
