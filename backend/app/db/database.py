@@ -81,6 +81,28 @@ class ManagedApp(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
+class DeploymentTask(Base):
+    """一次 Compose 部署执行记录，用于展示成功或失败上下文。"""
+    __tablename__ = "deployment_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(64), index=True, nullable=False)
+    source_url = Column(Text, nullable=True)
+    app_name = Column(String(256), nullable=False)
+    compose_project = Column(String(256), index=True, nullable=False)
+    work_dir = Column(Text, nullable=False)
+    compose_path = Column(Text, nullable=False)
+    env_path = Column(Text, nullable=True)
+    status = Column(String(32), index=True, default="running")
+    message = Column(Text, nullable=True)
+    compose_output = Column(Text, nullable=True)
+    error_output = Column(Text, nullable=True)
+    access_urls = Column(JSON, nullable=True)
+    app_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
 class LLMProvider(Base):
     """自定义及内置 LLM 提供商配置。"""
     __tablename__ = "llm_providers"

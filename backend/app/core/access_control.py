@@ -26,5 +26,5 @@ def is_loopback_host(host_header: str) -> bool:
         return False
 
 
-def should_allow_without_access_token(host_header: str) -> bool:
-    return is_loopback_host(host_header)
+def should_allow_without_access_token(host_header: str, client_host: str) -> bool:
+    return is_loopback_host(host_header) and is_loopback_host(client_host)

@@ -60,6 +60,7 @@ class AgentChatResponse(BaseModel):
 class DeployRequest(BaseModel):
     source: str
     description: Optional[str] = None
+    env_vars: Optional[Dict[str, str]] = None
 
 
 class DeployResult(BaseModel):

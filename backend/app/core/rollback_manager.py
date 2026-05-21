@@ -32,6 +32,8 @@ class RollbackManager:
         for c in containers:
             try:
                 detail = await docker_manager.get_container(c["full_id"])
+                if c.get("labels") and not detail.get("labels"):
+                    detail["labels"] = c["labels"]
                 detailed_containers.append(detail)
             except Exception:
                 detailed_containers.append(c)
@@ -97,12 +99,24 @@ class RollbackManager:
             "errors": [],
         }
 
+        compose_project = snap.compose_project or ""
+        snapped_containers = self._filter_containers_by_compose_project(
+            snap.containers or [],
+            compose_project,
+            keep_unlabeled=True,
+        )
+
         # 1. 获取快照时的容器 ID 集合
-        snapped_ids = {c.get("full_id") or c.get("id") for c in snap.containers}
-        snapped_names = {c.get("name") for c in snap.containers}
+        snapped_ids = {c.get("full_id") or c.get("id") for c in snapped_containers}
+        snapped_names = {c.get("name") for c in snapped_containers}
 
         # 2. 获取当前所有容器
         current_containers = await docker_manager.list_containers(all=True)
+        current_containers = self._filter_containers_by_compose_project(
+            current_containers,
+            compose_project,
+            keep_unlabeled=False,
+        )
 
         # 3. 停止并删除快照中没有的容器（新增的容器）
         for cc in current_containers:
@@ -118,9 +132,14 @@ class RollbackManager:
 
         # 4. 恢复快照中存在、但当前已停止或不存在的容器
         current_after = await docker_manager.list_containers(all=True)
+        current_after = self._filter_containers_by_compose_project(
+            current_after,
+            compose_project,
+            keep_unlabeled=False,
+        )
         current_names = {c["name"]: c for c in current_after}
 
-        for sc in snap.containers:
+        for sc in snapped_containers:
             name = sc.get("name", "")
             status_was = sc.get("status", "")
             if name in current_names:
@@ -135,8 +154,18 @@ class RollbackManager:
 
         # 5. 如果不保留卷，删除快照后新增的卷
         if not keep_volumes:
-            snapped_vol_names = {v["name"] for v in snap.volumes}
+            snapped_volumes = self._filter_volumes_by_compose_project(
+                snap.volumes or [],
+                compose_project,
+                keep_unlabeled=True,
+            )
+            snapped_vol_names = {v["name"] for v in snapped_volumes}
             current_volumes = await docker_manager.list_volumes()
+            current_volumes = self._filter_volumes_by_compose_project(
+                current_volumes,
+                compose_project,
+                keep_unlabeled=False,
+            )
             for v in current_volumes:
                 if v["name"] not in snapped_vol_names:
                     try:
@@ -153,6 +182,47 @@ class RollbackManager:
             report["message"] += f" 有 {len(report['errors'])} 个错误。"
 
         return report
+
+    def _filter_containers_by_compose_project(
+        self,
+        containers: List[Dict[str, Any]],
+        compose_project: str,
+        keep_unlabeled: bool,
+    ) -> List[Dict[str, Any]]:
+        if not compose_project:
+            return containers
+        return [
+            c for c in containers
+            if self._matches_compose_project(c, compose_project, keep_unlabeled)
+        ]
+
+    def _filter_volumes_by_compose_project(
+        self,
+        volumes: List[Dict[str, Any]],
+        compose_project: str,
+        keep_unlabeled: bool,
+    ) -> List[Dict[str, Any]]:
+        if not compose_project:
+            return volumes
+        return [
+            v for v in volumes
+            if self._matches_compose_project(v, compose_project, keep_unlabeled)
+        ]
+
+    def _matches_compose_project(
+        self,
+        item: Dict[str, Any],
+        compose_project: str,
+        keep_unlabeled: bool,
+    ) -> bool:
+        labels = item.get("labels")
+        if labels is None:
+            labels = (item.get("config") or {}).get("Labels")
+        labels = labels or {}
+        item_project = labels.get("com.docker.compose.project")
+        if item_project:
+            return item_project == compose_project
+        return keep_unlabeled
 
 
 rollback_manager = RollbackManager()

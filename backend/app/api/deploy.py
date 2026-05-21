@@ -1,15 +1,31 @@
 import uuid
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.core.webfetch import web_fetcher
 from app.core.compose_preflight import analyze_compose
-from app.core.agent_engine import agent_engine
 from app.core.rollback_manager import rollback_manager
+from app.core.deploy_plan import build_deployment_plan
+from app.core.deployment_tasks import get_deployment_task, list_deployment_tasks
+from app.core.docker_manager import docker_manager
 from app.models.schemas import DeployRequest, DeployResult
 
 router = APIRouter(prefix="/deploy", tags=["deploy"])
+
+
+@router.get("/tasks")
+async def list_tasks(db: AsyncSession = Depends(get_db)):
+    return await list_deployment_tasks(db)
+
+
+@router.get("/tasks/{task_id}")
+async def get_task(task_id: int, db: AsyncSession = Depends(get_db)):
+    task = await get_deployment_task(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="部署任务不存在")
+    return task
 
 
 @router.post("/analyze")
@@ -20,14 +36,30 @@ async def analyze_source(req: DeployRequest, db: AsyncSession = Depends(get_db))
     """
     try:
         result = await web_fetcher.resolve_source(req.source)
+        occupied_ports = await _get_occupied_host_ports()
         compose_content = result.get("compose_content")
         if isinstance(compose_content, str) and compose_content.strip():
-            result["preflight"] = analyze_compose(compose_content)
+            result["preflight"] = analyze_compose(
+                compose_content,
+                env_vars=req.env_vars or {},
+                occupied_ports=occupied_ports,
+            )
         page_info = result.get("page_info")
         if isinstance(page_info, dict) and page_info.get("compose_blocks"):
             blocks = page_info.get("compose_blocks")
             if isinstance(blocks, list) and blocks:
-                result["preflight"] = analyze_compose(str(blocks[0]))
+                result["preflight"] = analyze_compose(
+                    str(blocks[0]),
+                    env_vars=req.env_vars or {},
+                    occupied_ports=occupied_ports,
+                )
+        result["deployment_plan"] = build_deployment_plan(
+            source=req.source,
+            description=req.description,
+            analysis=result,
+            env_vars=req.env_vars or {},
+            occupied_ports=occupied_ports,
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"解析失败：{str(e)}")
@@ -46,6 +78,11 @@ async def smart_deploy(req: DeployRequest, db: AsyncSession = Depends(get_db)):
     session_id = str(uuid.uuid4())
     source_desc = req.description or req.source
     message = f"请帮我部署：{source_desc}（来源：{req.source}）"
+    if req.env_vars:
+        message += (
+            "\n\n用户已经在部署页填写了这些环境变量，请在部署时使用：\n"
+            f"{json.dumps(req.env_vars, ensure_ascii=False, indent=2)}"
+        )
 
     try:
         # 部署前快照
@@ -64,3 +101,29 @@ async def smart_deploy(req: DeployRequest, db: AsyncSession = Depends(get_db)):
         "ws_url": f"/agent/chat/ws/{session_id}",
         "init_message": message,
     }
+
+
+async def _get_occupied_host_ports() -> set[int]:
+    ports: set[int] = set()
+    try:
+        containers = await docker_manager.list_containers(all=True)
+    except Exception:
+        return ports
+
+    for container in containers:
+        bindings = container.get("ports") or {}
+        if not isinstance(bindings, dict):
+            continue
+        for value in bindings.values():
+            if not isinstance(value, list):
+                continue
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                host_port = item.get("HostPort")
+                try:
+                    if host_port:
+                        ports.add(int(host_port))
+                except ValueError:
+                    continue
+    return ports

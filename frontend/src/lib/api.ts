@@ -84,6 +84,50 @@ export interface ManagedApp {
   snapshots?: ManagedAppSnapshot[]
 }
 
+export interface DeploymentEnvEntry {
+  key: string
+  description?: string
+  default?: string
+  example?: string
+}
+
+export interface DeploymentPlan {
+  source: string
+  description: string
+  app_name: string
+  compose_project: string
+  work_dir: string
+  files: Array<{ kind: string; path: string; action: string }>
+  env: {
+    required: DeploymentEnvEntry[]
+    optional: DeploymentEnvEntry[]
+    provided_keys: string[]
+    missing_required_keys: string[]
+  }
+  warnings: Array<{ level?: string; code?: string; message: string }>
+  access_urls: Array<{ service: string; url: string }>
+  deployable: boolean
+}
+
+export interface DeploymentTask {
+  id: number
+  session_id: string
+  source_url: string
+  app_name: string
+  compose_project: string
+  work_dir: string
+  compose_path: string
+  env_path: string
+  status: string
+  message: string
+  compose_output: string
+  error_output: string
+  access_urls: Array<{ service: string; url: string }>
+  app_id: number | null
+  created_at: string
+  updated_at: string
+}
+
 export class ConfirmationRequiredError extends Error {
   payload: ConfirmationRequiredPayload
 
@@ -244,10 +288,12 @@ export const agentApi = {
 // ── Deploy ──────────────────────────────────────────────
 
 export const deployApi = {
-  analyze: (source: string, description?: string) =>
-    request('/deploy/analyze', { method: 'POST', body: JSON.stringify({ source, description }) }),
-  smartDeploy: (source: string, description?: string) =>
-    request('/deploy/smart', { method: 'POST', body: JSON.stringify({ source, description }) }),
+  analyze: (source: string, description?: string, env_vars?: Record<string, string>) =>
+    request('/deploy/analyze', { method: 'POST', body: JSON.stringify({ source, description, env_vars }) }),
+  smartDeploy: (source: string, description?: string, env_vars?: Record<string, string>) =>
+    request('/deploy/smart', { method: 'POST', body: JSON.stringify({ source, description, env_vars }) }),
+  listTasks: () => request<DeploymentTask[]>('/deploy/tasks'),
+  getTask: (id: number) => request<DeploymentTask>(`/deploy/tasks/${id}`),
 }
 
 // ── Rollback ──────────────────────────────────────────────

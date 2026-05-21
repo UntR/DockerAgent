@@ -65,7 +65,7 @@ app.add_middleware(
 # ACCESS_TOKEN: 设置后，所有 /api/* 请求均需携带该 Token
 # HTTP：Authorization: Bearer <token>  或  X-API-Key: <token>
 # WebSocket 握手在 agent.py 中校验：?token=<token> 查询参数
-# 留空则跳过鉴权（向后兼容，仅推荐纯内网环境）
+# 留空则只允许 Host 与真实客户端地址都为本机 loopback
 _ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "").strip()
 
 _AUTH_SKIP_PATHS = {"/api/health"}
@@ -74,7 +74,8 @@ _AUTH_SKIP_PATHS = {"/api/health"}
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     if not _ACCESS_TOKEN:
-        if not should_allow_without_access_token(request.headers.get("host", "")):
+        client_host = request.client.host if request.client else ""
+        if not should_allow_without_access_token(request.headers.get("host", ""), client_host):
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": LOCAL_ONLY_DETAIL},

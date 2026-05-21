@@ -15,7 +15,14 @@ class SecurityDefaultsTest(unittest.TestCase):
         self.assertFalse(is_loopback_host(""))
 
     def test_localhost_is_allowed_without_access_token(self):
-        self.assertTrue(should_allow_without_access_token("localhost:8088"))
+        self.assertTrue(should_allow_without_access_token("localhost:8088", "127.0.0.1"))
+        self.assertTrue(should_allow_without_access_token("[::1]:8088", "::1"))
 
     def test_non_local_host_is_rejected_without_access_token(self):
-        self.assertFalse(should_allow_without_access_token("example.com"))
+        self.assertFalse(should_allow_without_access_token("example.com", "127.0.0.1"))
+
+    def test_spoofed_localhost_host_is_rejected_without_access_token(self):
+        self.assertFalse(should_allow_without_access_token("localhost:8088", "203.0.113.10"))
+
+    def test_missing_client_host_is_rejected_without_access_token(self):
+        self.assertFalse(should_allow_without_access_token("localhost:8088", ""))

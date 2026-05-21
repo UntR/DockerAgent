@@ -17,16 +17,18 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 async def chat_websocket(websocket: WebSocket, session_id: str):
     """WebSocket 流式对话接口。
     
-    ACCESS_TOKEN 为空时仅允许本机 Host；设置后从 ?token= 查询参数校验。
+    ACCESS_TOKEN 为空时仅允许本机 Host 与真实客户端地址；设置后从 ?token= 查询参数校验。
     """
     access_token = os.environ.get("ACCESS_TOKEN", "").strip()
     if access_token:
         if websocket.query_params.get("token", "") != access_token:
             await websocket.close(code=1008, reason="未授权：WebSocket 握手缺少有效的 token 参数")
             return
-    elif not should_allow_without_access_token(websocket.headers.get("host", "")):
-        await websocket.close(code=1008, reason=LOCAL_ONLY_DETAIL)
-        return
+    else:
+        client_host = websocket.client.host if websocket.client else ""
+        if not should_allow_without_access_token(websocket.headers.get("host", ""), client_host):
+            await websocket.close(code=1008, reason=LOCAL_ONLY_DETAIL)
+            return
 
     await websocket.accept()
     from app.db.database import AsyncSessionLocal

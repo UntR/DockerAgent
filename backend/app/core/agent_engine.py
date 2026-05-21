@@ -17,6 +17,7 @@ from app.core.rollback_manager import rollback_manager
 from app.core.confirmation import build_confirmation_required
 from app.core.compose_preflight import analyze_compose
 from app.core.app_registry import build_app_record, upsert_managed_app
+from app.core.deployment_tasks import create_deployment_task, update_deployment_task
 from app.core.deploy_result import build_deploy_success_result
 from app.core.app_dependency import (
     APP_DESCRIPTIONS,
@@ -325,6 +326,8 @@ class AgentEngine:
 
                 base_dir = os.environ.get("PROJECTS_BASE_DIR", "/opt/docker-projects")
                 work_dir = os.path.join(base_dir, project_name)
+                compose_path = os.path.join(work_dir, "docker-compose.yml")
+                env_path_value = os.path.join(work_dir, ".env") if env_vars else ""
                 occupied_ports = await self._get_occupied_host_ports()
                 preflight = analyze_compose(
                     compose_content,
@@ -332,15 +335,36 @@ class AgentEngine:
                     work_dir=work_dir,
                     occupied_ports=occupied_ports,
                 )
+                deployment_task = None
+                try:
+                    deployment_task = await create_deployment_task(
+                        db,
+                        session_id=session_id,
+                        source_url=tool_input.get("source_url") or "",
+                        app_name=tool_input.get("display_name") or project_name,
+                        compose_project=project_name,
+                        work_dir=work_dir,
+                        compose_path=compose_path,
+                        env_path=env_path_value,
+                        status="running",
+                        message="正在执行 Compose 部署",
+                        access_urls=preflight.get("access_urls") or [],
+                    )
+                except Exception:
+                    pass
                 blocking_warnings = [
                     w for w in preflight.get("warnings", [])
                     if w.get("code") == "port_conflict"
                 ]
                 if blocking_warnings:
-                    return (
+                    message = (
                         "部署前预检失败，尚未写入文件或执行 compose。\n"
                         f"{self._format_preflight({'warnings': blocking_warnings})}"
                     )
+                    await self._safe_update_deployment_task(
+                        db, deployment_task, status="failed", message=message
+                    )
+                    return message
 
                 try:
                     await rollback_manager.take_snapshot(
@@ -351,11 +375,14 @@ class AgentEngine:
                         compose_project=project_name,
                     )
                 except Exception as e:
-                    return f"部署前快照失败，尚未写入文件或执行 compose：{str(e)}"
+                    message = f"部署前快照失败，尚未写入文件或执行 compose：{str(e)}"
+                    await self._safe_update_deployment_task(
+                        db, deployment_task, status="failed", message=message, error_output=str(e)
+                    )
+                    return message
 
                 os.makedirs(work_dir, exist_ok=True)
 
-                compose_path = os.path.join(work_dir, "docker-compose.yml")
                 with open(compose_path, "w", encoding="utf-8") as f:
                     f.write(compose_content)
 
@@ -388,18 +415,30 @@ class AgentEngine:
                     )
                     pull_output = (pull_proc.stdout + pull_proc.stderr).strip()
                     if pull_proc.returncode != 0:
-                        return (
+                        message = (
                             f"镜像拉取失败（退出码 {pull_proc.returncode}）。\n"
                             f"工作目录：{work_dir}\n"
                             f"错误输出：\n{pull_output[-3000:] if len(pull_output) > 3000 else pull_output}"
                         )
+                        await self._safe_update_deployment_task(
+                            db,
+                            deployment_task,
+                            status="failed",
+                            message=f"镜像拉取失败（退出码 {pull_proc.returncode}）",
+                            error_output=pull_output,
+                        )
+                        return message
                 except subprocess.TimeoutExpired:
                     timeout_hint = f"{pull_timeout} 秒" if pull_timeout else "默认"
-                    return (
+                    message = (
                         f"镜像拉取超时（{timeout_hint}）。\n"
                         f"如需部署大型镜像（如 vLLM / CUDA），请在 .env 中设置 "
                         f"COMPOSE_PULL_TIMEOUT=0（不限时）后重试。"
                     )
+                    await self._safe_update_deployment_task(
+                        db, deployment_task, status="failed", message=message
+                    )
+                    return message
 
                 # ── 步骤 2：启动容器（镜像已本地缓存，启动应很快）───────────
                 try:
@@ -413,7 +452,6 @@ class AgentEngine:
                     up_output = (up_proc.stdout + up_proc.stderr).strip()
                     if up_proc.returncode == 0:
                         access_urls = preflight.get("access_urls") or []
-                        env_path_value = os.path.join(work_dir, ".env") if env_vars else ""
                         app_id = None
                         app_record = build_app_record(
                             name=tool_input.get("display_name") or project_name,
@@ -430,6 +468,15 @@ class AgentEngine:
                         except Exception:
                             pass
 
+                        await self._safe_update_deployment_task(
+                            db,
+                            deployment_task,
+                            status="deployed",
+                            message="部署成功",
+                            compose_output=up_output,
+                            access_urls=access_urls,
+                            app_id=app_id,
+                        )
                         return build_deploy_success_result(
                             project_name=project_name,
                             work_dir=work_dir,
@@ -438,17 +485,29 @@ class AgentEngine:
                             app_id=app_id,
                         )
                     else:
-                        return (
+                        message = (
                             f"部署失败（退出码 {up_proc.returncode}）。\n"
                             f"工作目录：{work_dir}\n"
                             f"错误输出：\n{up_output[-3000:] if len(up_output) > 3000 else up_output}"
                         )
+                        await self._safe_update_deployment_task(
+                            db,
+                            deployment_task,
+                            status="failed",
+                            message=f"部署失败（退出码 {up_proc.returncode}）",
+                            error_output=up_output,
+                        )
+                        return message
                 except subprocess.TimeoutExpired:
-                    return (
+                    message = (
                         f"容器启动超时（{up_timeout} 秒）。镜像已拉取完成，"
                         f"可手动执行 `docker compose -p {project_name} up -d` 或查看 "
                         f"`docker compose -p {project_name} logs` 排查原因。"
                     )
+                    await self._safe_update_deployment_task(
+                        db, deployment_task, status="failed", message=message
+                    )
+                    return message
 
             elif tool_name == "save_memory":
                 await memory_manager.set_memory(
@@ -914,6 +973,19 @@ class AgentEngine:
                     except ValueError:
                         continue
         return ports
+
+    async def _safe_update_deployment_task(
+        self,
+        db: AsyncSession,
+        task: Any,
+        **kwargs: Any,
+    ) -> None:
+        if not task:
+            return
+        try:
+            await update_deployment_task(db, task, **kwargs)
+        except Exception:
+            pass
 
     def _parse_json_object(self, value: str) -> Dict[str, Any]:
         try:
