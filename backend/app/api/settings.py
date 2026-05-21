@@ -6,6 +6,7 @@ import json
 import httpx
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -65,39 +66,139 @@ BUILTIN_MODELS: Dict[str, List[str]] = {
         "claude-3-haiku-20240307",
     ],
     "openai": [
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.2",
+        "gpt-5.2-chat-latest",
+        "gpt-5.1",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "gpt-4.1",
+        "gpt-4.1-mini",
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4-turbo",
-        "gpt-4",
-        "gpt-3.5-turbo",
-        "o1-preview",
-        "o1-mini",
     ],
 }
 
-# 不支持标准 /models 接口的提供商，按域名匹配内置模型列表
+# OpenAI 兼容提供商的模型列表回退。优先请求 /models；不支持 /models 时按域名回退到这里。
 DOMAIN_BUILTIN_MODELS: Dict[str, List[str]] = {
-    "minimax.chat": [
-        "MiniMax-Text-01",
-        "MiniMax-M1",
-        "abab6.5s-chat",
-        "abab6.5g-chat",
-        "abab5.5s-chat",
-        "abab5.5-chat",
+    "deepseek.com": [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "deepseek-chat",
+        "deepseek-reasoner",
+    ],
+    "api.minimax.io": [
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2",
+    ],
+    "api.minimaxi.com": [
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2",
+    ],
+    "siliconflow.com": [
+        "deepseek-ai/DeepSeek-V3.2",
+        "deepseek-ai/DeepSeek-R1",
+        "Qwen/Qwen3.5-32B",
+        "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        "zai-org/GLM-4.7",
+        "moonshotai/Kimi-K2.6",
+        "MiniMaxAI/MiniMax-M2.5",
+    ],
+    "ark.cn-beijing.volces.com": [
+        "doubao-seed-1-8-251228",
+        "doubao-seed-1-6-251015",
+        "doubao-seed-1-6-250615",
+        "doubao-seed-code-preview-251028",
+        "deepseek-v3-2-251201",
+        "kimi-k2-5-260127",
     ],
     "moonshot.cn": [
-        "moonshot-v1-8k",
-        "moonshot-v1-32k",
-        "moonshot-v1-128k",
+        "kimi-k2.6",
+        "kimi-k2.5",
+        "kimi-k2",
+    ],
+    "moonshot.ai": [
+        "kimi-k2.6",
+        "kimi-k2.5",
+        "kimi-k2",
     ],
     "bigmodel.cn": [
-        "glm-4",
-        "glm-4-plus",
+        "glm-4.7",
+        "glm-4.6",
+        "glm-4.5",
         "glm-4-flash",
-        "glm-4-air",
-        "glm-4-long",
-        "glm-4-airx",
-        "glm-zero-preview",
+    ],
+    "dashscope.aliyuncs.com": [
+        "qwen3.6-plus",
+        "qwen3.6-max-preview",
+        "qwen3.6-flash",
+        "qwen3.5-plus",
+        "qwen-plus",
+        "qwen-plus-latest",
+        "qwen-max",
+        "qwen3-max",
+        "qwen-flash",
+        "qwen3-coder-plus",
+    ],
+    "dashscope-intl.aliyuncs.com": [
+        "qwen3.6-plus",
+        "qwen3.6-max-preview",
+        "qwen3.6-flash",
+        "qwen3.5-plus",
+        "qwen-plus",
+        "qwen-plus-latest",
+        "qwen-max",
+        "qwen3-max",
+        "qwen-flash",
+        "qwen3-coder-plus",
+    ],
+    "dashscope-us.aliyuncs.com": [
+        "qwen3.6-plus",
+        "qwen3.6-max-preview",
+        "qwen3.6-flash",
+        "qwen3.5-plus",
+        "qwen-plus",
+        "qwen-plus-latest",
+        "qwen-max",
+        "qwen3-max",
+        "qwen-flash",
+        "qwen3-coder-plus",
+    ],
+    "cn-hongkong.dashscope.aliyuncs.com": [
+        "qwen3.6-plus",
+        "qwen3.6-max-preview",
+        "qwen3.6-flash",
+        "qwen3.5-plus",
+        "qwen-plus",
+        "qwen-plus-latest",
+        "qwen-max",
+        "qwen3-max",
+        "qwen-flash",
+        "qwen3-coder-plus",
+    ],
+    "openrouter.ai": [
+        "openrouter/auto",
+        "openai/gpt-5.4",
+        "anthropic/claude-sonnet-4.5",
+        "deepseek/deepseek-chat-v3.2",
+    ],
+    "groq.com": [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "llama-3.3-70b-versatile",
+    ],
+    "integrate.api.nvidia.com": [
+        "openai/gpt-oss-120b",
     ],
 }
 
@@ -391,6 +492,14 @@ async def _do_test(
             raise Exception(f"HTTP {resp.status_code}: {error}")
 
     elif provider_type in ("openai", "custom"):
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        if provider_type == "openai":
+            payload["max_completion_tokens"] = 10
+        else:
+            payload["max_tokens"] = 10
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{url_base}/chat/completions",
@@ -398,11 +507,7 @@ async def _do_test(
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": model,
-                    "max_tokens": 10,
-                    "messages": [{"role": "user", "content": "hi"}],
-                },
+                json=payload,
             )
         if resp.status_code == 200:
             data = resp.json()
@@ -422,8 +527,11 @@ def _get_domain_builtin_models(base_url: Optional[str]) -> Optional[List[str]]:
     """根据 base_url 的域名，查找内置模型列表（用于不支持 /models 接口的提供商）。"""
     if not base_url:
         return None
+    host = urlparse(base_url).hostname or base_url
+    host = host.lower()
     for domain, models in DOMAIN_BUILTIN_MODELS.items():
-        if domain in base_url:
+        domain = domain.lower()
+        if host == domain or host.endswith(f".{domain}"):
             return models
     return None
 
@@ -440,10 +548,7 @@ async def _fetch_model_list(
         return BUILTIN_MODELS["anthropic"]
 
     elif provider_type in ("openai", "custom"):
-        # 先检查是否属于已知不支持 /models 的提供商（按域名）
         domain_models = _get_domain_builtin_models(url_base)
-        if domain_models is not None:
-            return domain_models
 
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -464,6 +569,8 @@ async def _fetch_model_list(
                 2 if "instruct" in x else 3
             ))
             return models[:50] if models else []
+        elif resp.status_code in (404, 405) and domain_models is not None:
+            return domain_models
         elif resp.status_code == 404:
             # 服务端不支持 /models 端点
             raise Exception(f"该提供商不支持模型列表接口（404），请手动输入模型名称")

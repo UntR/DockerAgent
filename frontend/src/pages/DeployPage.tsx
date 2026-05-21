@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Rocket, Github, Globe, Package, Sparkles, ArrowRight, Loader } from 'lucide-react'
 import { deployApi } from '../lib/api'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
 const EXAMPLES = [
@@ -13,8 +13,10 @@ const EXAMPLES = [
 ]
 
 export default function DeployPage() {
-  const [source, setSource] = useState('')
-  const [description, setDescription] = useState('')
+  const location = useLocation()
+  const routeState = location.state as { source?: string; description?: string } | null
+  const [source, setSource] = useState(routeState?.source ?? '')
+  const [description, setDescription] = useState(routeState?.description ?? '')
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState<Record<string, unknown> | null>(null)
   const navigate = useNavigate()

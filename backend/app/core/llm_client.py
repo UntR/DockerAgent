@@ -209,9 +209,12 @@ class LLMClient:
 
         kwargs: Dict[str, Any] = {
             "model": self.model,
-            "max_tokens": max_tokens,
             "messages": oai_messages,
         }
+        if self.provider == "openai":
+            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["max_tokens"] = max_tokens
         if tools:
             kwargs["tools"] = self._to_openai_tools(tools)
             kwargs["tool_choice"] = "auto"
@@ -249,12 +252,17 @@ class LLMClient:
             oai_messages.append({"role": "system", "content": system})
         oai_messages.extend(messages)
 
-        stream = await self._openai.chat.completions.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            messages=oai_messages,
-            stream=True,
-        )
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": oai_messages,
+            "stream": True,
+        }
+        if self.provider == "openai":
+            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["max_tokens"] = max_tokens
+
+        stream = await self._openai.chat.completions.create(**kwargs)
         async for chunk in stream:
             delta = chunk.choices[0].delta.content
             if delta:

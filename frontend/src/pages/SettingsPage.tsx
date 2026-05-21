@@ -17,18 +17,23 @@ const PROVIDER_TYPES = [
   { value: 'custom',    label: '自定义 (OpenAI 兼容)', color: 'text-purple-400',  bg: 'bg-purple-500/10 border-purple-500/20' },
 ]
 
-const PRESET_BASE_URLS = [
-  { label: 'OpenAI 官方', url: 'https://api.openai.com/v1' },
-  { label: 'DeepSeek',    url: 'https://api.deepseek.com/v1' },
-  { label: 'Moonshot (Kimi)', url: 'https://api.moonshot.cn/v1' },
-  { label: 'Zhipu AI',   url: 'https://open.bigmodel.cn/api/paas/v4' },
-  { label: '阿里云 DashScope', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { label: 'MiniMax',     url: 'https://api.minimax.chat/v1' },
-  { label: 'SiliconFlow', url: 'https://api.siliconflow.cn/v1' },
-  { label: 'Groq',       url: 'https://api.groq.com/openai/v1' },
-  { label: 'Together AI', url: 'https://api.together.xyz/v1' },
-  { label: 'Ollama 本地', url: 'http://localhost:11434/v1' },
-  { label: 'LM Studio',  url: 'http://localhost:1234/v1' },
+const PROVIDER_PRESETS = [
+  { label: 'OpenAI 官方', url: 'https://api.openai.com/v1', model: 'gpt-5.5', provider_type: 'openai' },
+  { label: 'DeepSeek', url: 'https://api.deepseek.com', model: 'deepseek-v4-flash', provider_type: 'custom' },
+  { label: 'MiniMax 国际', url: 'https://api.minimax.io/v1', model: 'MiniMax-M2.7', provider_type: 'custom' },
+  { label: 'MiniMax 中国', url: 'https://api.minimaxi.com/v1', model: 'MiniMax-M2.7', provider_type: 'custom' },
+  { label: 'SiliconFlow', url: 'https://api.siliconflow.com/v1', model: 'deepseek-ai/DeepSeek-V3.2', provider_type: 'custom' },
+  { label: '火山方舟 / 豆包', url: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seed-1-8-251228', provider_type: 'custom' },
+  { label: 'Qwen / 百炼北京', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3.6-plus', provider_type: 'custom' },
+  { label: 'Qwen / 百炼国际', url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', model: 'qwen3.6-plus', provider_type: 'custom' },
+  { label: 'GLM / 智谱', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.7', provider_type: 'custom' },
+  { label: 'Kimi 中国', url: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6', provider_type: 'custom' },
+  { label: 'Kimi 国际', url: 'https://api.moonshot.ai/v1', model: 'kimi-k2.6', provider_type: 'custom' },
+  { label: 'OpenRouter', url: 'https://openrouter.ai/api/v1', model: 'openrouter/auto', provider_type: 'custom' },
+  { label: 'Groq', url: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-120b', provider_type: 'custom' },
+  { label: 'NVIDIA NIM', url: 'https://integrate.api.nvidia.com/v1', model: 'openai/gpt-oss-120b', provider_type: 'custom' },
+  { label: 'Ollama 本地', url: 'http://localhost:11434/v1', model: 'qwen3:8b', provider_type: 'custom' },
+  { label: 'LM Studio', url: 'http://localhost:1234/v1', model: 'local-model', provider_type: 'custom' },
 ]
 
 const DEFAULT_FORM: ProviderCreate & { id?: number } = {
@@ -565,12 +570,16 @@ function ProviderFormModal({
                   className="rounded-xl border border-white/[0.08] bg-[#161820] overflow-hidden"
                 >
                   <div className="max-h-44 overflow-y-auto">
-                    {PRESET_BASE_URLS.map((preset) => (
+                    {PROVIDER_PRESETS.map((preset) => (
                       <button
                         key={preset.url}
                         type="button"
                         onClick={() => {
+                          set('provider_type', preset.provider_type)
                           set('base_url', preset.url)
+                          if (!form.name.trim()) set('name', preset.label)
+                          if (!form.model.trim()) set('model', preset.model)
+                          setModelList([])
                           setShowUrlPreset(false)
                         }}
                         className={cn(
@@ -580,6 +589,7 @@ function ProviderFormModal({
                       >
                         <div className="text-xs font-medium text-white">{preset.label}</div>
                         <div className="text-[10px] font-mono text-gray-500 truncate">{preset.url}</div>
+                        <div className="mt-0.5 text-[10px] font-mono text-cyan-400/70 truncate">{preset.model}</div>
                       </button>
                     ))}
                   </div>
@@ -618,7 +628,7 @@ function ProviderFormModal({
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="例如：gpt-4o / claude-3-5-sonnet-20241022"
+                  placeholder="例如：gpt-5.5 / deepseek-v4-flash / qwen3.6-plus"
                   value={form.model}
                   onChange={(e) => set('model', e.target.value)}
                   className={cn(inputCls, 'flex-1 font-mono')}
@@ -759,7 +769,7 @@ function InfoCards() {
         },
         {
           title: 'OpenAI / 兼容接口',
-          desc: '支持 OpenAI、DeepSeek、Kimi、阿里云等任何兼容 OpenAI API 格式的服务',
+          desc: '支持 DeepSeek、MiniMax、SiliconFlow、豆包、Qwen、GLM、Kimi、OpenRouter、Groq、NVIDIA 等兼容 Chat Completions 的服务',
           color: 'border-emerald-500/15 bg-emerald-500/5',
           accent: 'text-emerald-400',
         },
